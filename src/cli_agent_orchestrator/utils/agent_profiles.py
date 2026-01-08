@@ -9,6 +9,24 @@ from cli_agent_orchestrator.constants import LOCAL_AGENT_STORE_DIR
 from cli_agent_orchestrator.models.agent_profile import AgentProfile
 
 
+def list_installed_agents() -> list[str]:
+    """List all installed agent profiles (local and built-in)."""
+    agents = set()
+
+    # List local agents
+    if LOCAL_AGENT_STORE_DIR.exists():
+        for file in LOCAL_AGENT_STORE_DIR.glob("*.md"):
+            agents.add(file.stem)
+
+    # List built-in agents
+    agent_store = resources.files("cli_agent_orchestrator.agent_store")
+    for file in agent_store.iterdir():
+        if file.name.endswith(".md"):
+            agents.add(file.name[:-3])  # Remove .md extension
+
+    return sorted(list(agents))
+
+
 def load_agent_profile(agent_name: str) -> AgentProfile:
     """Load agent profile from local or built-in agent store."""
     try:

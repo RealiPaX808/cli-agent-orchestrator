@@ -63,10 +63,10 @@ class TmuxClient:
             logger.error(f"Failed to create window in session {session_name}: {e}")
             raise
 
-    def send_keys(self, session_name: str, window_name: str, keys: str) -> None:
+    def send_keys(self, session_name: str, window_name: str, keys: str, enter: bool = True) -> None:
         """Send keys to window with chunking for long messages."""
         try:
-            logger.info(f"send_keys: {session_name}:{window_name} - keys: {keys}")
+            logger.info(f"send_keys: {session_name}:{window_name} - keys: {keys} (enter={enter})")
 
             session = self.server.sessions.get(session_name=session_name)
             if not session:
@@ -105,8 +105,9 @@ class TmuxClient:
                     pane.send_keys(chunk, enter=False)
                     time.sleep(SEND_KEYS_CHUNK_INTERVAL)
 
-                # Send carriage return as separate command
-                pane.send_keys("C-m", enter=False)
+                if enter:
+                    # Send carriage return as separate command
+                    pane.send_keys("C-m", enter=False)
                 logger.debug(f"Sent keys to {session_name}:{window_name}")
         except Exception as e:
             logger.error(f"Failed to send keys to {session_name}:{window_name}: {e}")
@@ -249,6 +250,46 @@ class TmuxClient:
         except Exception as e:
             logger.error(f"Failed to stop pipe-pane for {session_name}:{window_name}: {e}")
             raise
+
+    def resize_window(self, session_name: str, window_name: str, cols: int, rows: int) -> None:
+        """Resize tmux window to match frontend terminal."""
+        try:
+            session = self.server.sessions.get(session_name=session_name)
+            if not session:
+                return
+
+            window = session.windows.get(window_name=window_name)
+            if not window:
+                return
+
+            # Use cmd to resize window explicitly
+            # target = f"{session_name}:{window_name}"
+            # window.cmd("resize-window", "-x", str(cols), "-y", str(rows))
+            # Or try window object method if available
+            # window.resize(width=cols, height=rows) is standard in some versions, but cmd is safer.
+            window.cmd("resize-window", "-x", str(cols), "-y", str(rows))
+            logger.debug(f"Resized {session_name}:{window_name} to {cols}x{rows}")
+        except Exception as e:
+            logger.error(f"Failed to resize window {session_name}:{window_name}: {e}")
+
+    def get_pane_tty(self, session_name: str, window_name: str) -> Optional[str]:
+        """Get the TTY path for the active pane in a window."""
+        try:
+            session = self.server.sessions.get(session_name=session_name)
+            if not session:
+                return None
+            window = session.windows.get(window_name=window_name)
+            if not window:
+                return None
+            pane = window.active_pane
+            if not pane:
+                return None
+            
+            # pane.tty usually returns the path, e.g. /dev/pts/3
+            return pane.tty
+        except Exception as e:
+            logger.error(f"Failed to get pane TTY: {e}")
+            return None
 
 
 # Module-level singleton

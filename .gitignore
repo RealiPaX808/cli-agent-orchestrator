@@ -28,4 +28,5 @@ dist/
 .obsidian/
 
 # Memory
-context/
+context/package-lock.json
+bin/

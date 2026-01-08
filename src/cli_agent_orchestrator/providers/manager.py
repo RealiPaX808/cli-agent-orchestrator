@@ -12,6 +12,38 @@ from cli_agent_orchestrator.providers.q_cli import QCliProvider
 
 logger = logging.getLogger(__name__)
 
+try:
+    from cli_agent_orchestrator.providers.gemini_cli import GeminiCliProvider
+
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    logger.info("Gemini CLI provider not available")
+
+try:
+    from cli_agent_orchestrator.providers.qwen_cli import QwenCliProvider
+
+    QWEN_AVAILABLE = True
+except ImportError:
+    QWEN_AVAILABLE = False
+    logger.info("Qwen CLI provider not available")
+
+try:
+    from cli_agent_orchestrator.providers.gh_copilot import GhCopilotProvider
+
+    GH_COPILOT_AVAILABLE = True
+except ImportError:
+    GH_COPILOT_AVAILABLE = False
+    logger.info("GitHub Copilot provider not available")
+
+try:
+    from cli_agent_orchestrator.providers.opencode import OpenCodeProvider
+
+    OPENCODE_AVAILABLE = True
+except ImportError:
+    OPENCODE_AVAILABLE = False
+    logger.info("OpenCode provider not available")
+
 
 class ProviderManager:
     """Simplified provider manager with direct mapping."""
@@ -33,13 +65,43 @@ class ProviderManager:
             if provider_type == ProviderType.Q_CLI.value:
                 if not agent_profile:
                     raise ValueError("Q CLI provider requires agent_profile parameter")
-                provider = QCliProvider(terminal_id, tmux_session, tmux_window, agent_profile)
+                provider = QCliProvider(
+                    terminal_id, tmux_session, tmux_window, agent_profile
+                )
             elif provider_type == ProviderType.KIRO_CLI.value:
                 if not agent_profile:
-                    raise ValueError("Kiro CLI provider requires agent_profile parameter")
-                provider = KiroCliProvider(terminal_id, tmux_session, tmux_window, agent_profile)
+                    raise ValueError(
+                        "Kiro CLI provider requires agent_profile parameter"
+                    )
+                provider = KiroCliProvider(
+                    terminal_id, tmux_session, tmux_window, agent_profile
+                )
             elif provider_type == ProviderType.CLAUDE_CODE.value:
-                provider = ClaudeCodeProvider(terminal_id, tmux_session, tmux_window, agent_profile)
+                provider = ClaudeCodeProvider(
+                    terminal_id, tmux_session, tmux_window, agent_profile
+                )
+            elif provider_type == ProviderType.OPENCODE.value:
+                provider = OpenCodeProvider(
+                    terminal_id, tmux_session, tmux_window, agent_profile
+                )
+            elif provider_type == ProviderType.GEMINI_CLI.value:
+                if not GEMINI_AVAILABLE:
+                    raise ImportError("Gemini CLI provider not available")
+                provider = GeminiCliProvider(
+                    terminal_id, tmux_session, tmux_window, agent_profile
+                )
+            elif provider_type == ProviderType.QWEN_CLI.value:
+                if not QWEN_AVAILABLE:
+                    raise ImportError("Qwen CLI provider not available")
+                provider = QwenCliProvider(
+                    terminal_id, tmux_session, tmux_window, agent_profile
+                )
+            elif provider_type == ProviderType.GH_COPILOT.value:
+                if not GH_COPILOT_AVAILABLE:
+                    raise ImportError("GitHub Copilot provider not available")
+                provider = GhCopilotProvider(
+                    terminal_id, tmux_session, tmux_window, agent_profile
+                )
             else:
                 raise ValueError(f"Unknown provider type: {provider_type}")
 

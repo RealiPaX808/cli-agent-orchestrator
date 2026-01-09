@@ -1,15 +1,22 @@
 """Single FastAPI entry point for all HTTP routes."""
 
 import asyncio
+import fcntl
+import json
 import logging
 import os
+import pty
+import select
+import struct
+import subprocess
+import termios
 from contextlib import asynccontextmanager
-from typing import Annotated, Dict, List, Optional
 from importlib import resources
 from pathlib import Path
-import requests
+from typing import Annotated, Dict, List, Optional
+
 import aiofiles
-import json
+import requests
 
 from fastapi import FastAPI, HTTPException, Path as PathParam, Query, status, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, field_validator
@@ -467,154 +474,153 @@ async def delete_terminal(terminal_id: TerminalId) -> Dict:
 
 @app.websocket("/terminals/{terminal_id}/ws")
 async def websocket_endpoint(websocket: WebSocket, terminal_id: str):
+    """Clean PTY-Bridge WebSocket endpoint for xterm.js.
+
+    Architecture:
+    - Creates own PTY (master/slave) for isolation
+    - Spawns 'tmux attach' in the slave PTY
+    - Input: WebSocket → write to PTY master
+    - Output: read from PTY master → WebSocket
+    - No file polling, 0ms latency
+    """
     await websocket.accept()
     logger.info(f"WebSocket connected: {terminal_id}")
-    
-    # Get terminal metadata to find log file and tmux info
+
+    # Get terminal metadata
     try:
         metadata = get_terminal_metadata(terminal_id)
         if not metadata:
+            logger.error(f"Terminal {terminal_id} not found")
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
-            
-        log_path = TERMINAL_LOG_DIR / f"{terminal_id}.log"
+
         session_name = metadata["tmux_session"]
         window_name = metadata["tmux_window"]
-        
+
     except Exception as e:
         logger.error(f"WebSocket setup failed: {e}")
         await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
         return
 
-import subprocess
-import pty
-
-# ... imports ...
-
-@app.websocket("/terminals/{terminal_id}/ws")
-async def websocket_endpoint(websocket: WebSocket, terminal_id: str):
-    await websocket.accept()
-    logger.info(f"WebSocket connected: {terminal_id}")
-    
-    try:
-        metadata = get_terminal_metadata(terminal_id)
-        if not metadata:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-            
-        session_name = metadata["tmux_session"]
-        window_name = metadata["tmux_window"]
-        
-    except Exception as e:
-        logger.error(f"WebSocket setup failed: {e}")
-        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
-        return
-
-    # Direct Tmux Attach via PTY
-    # This bypasses file I/O and buffering completely.
+    # Create PTY for tmux attach subprocess
     master_fd, slave_fd = pty.openpty()
-    
-    # Start tmux attach in read-only mode (-r)
-    # We detach (-d)? No, we want to view.
-    # We must ensure we attach to the specific window?
-    # tmux attach -t session:window
+
+    # Start tmux attach (WITHOUT -r flag, we need full interaction)
     target = f"{session_name}:{window_name}"
-    
     proc = subprocess.Popen(
-        ['tmux', 'attach-session', '-t', target, '-r'],
+        ['tmux', 'attach-session', '-t', target],
         stdin=slave_fd,
         stdout=slave_fd,
         stderr=slave_fd,
-        preexec_fn=os.setsid, # New session
+        preexec_fn=os.setsid,  # New session for clean process management
         close_fds=True
     )
-    os.close(slave_fd) # Close slave in parent
+    os.close(slave_fd)  # Close slave in parent
+    logger.info(f"PTY created for {target}, master_fd={master_fd}, pid={proc.pid}")
 
-    # Helper to read from PTY master
-    async def pty_reader():
+    # Make master_fd non-blocking for asyncio compatibility
+    flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+    fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+    # Output reader: PTY Master → WebSocket
+    async def pty_to_websocket():
         loop = asyncio.get_running_loop()
         try:
             while True:
-                # Blocking read in executor to avoid blocking event loop
-                data = await loop.run_in_executor(None, os.read, master_fd, 4096)
-                if not data:
+                try:
+                    # Use select in executor for non-blocking read
+                    readable, _, _ = await loop.run_in_executor(
+                        None, select.select, [master_fd], [], [], 0.1
+                    )
+
+                    if not readable:
+                        # Check if process died
+                        if proc.poll() is not None:
+                            logger.info(f"PTY process exited with code {proc.returncode}")
+                            break
+                        continue
+
+                    # Read available data
+                    data = os.read(master_fd, 4096)
+                    if not data:
+                        logger.info("PTY closed (EOF)")
+                        break
+
+                    # Send to WebSocket
+                    await websocket.send_text(data.decode('utf-8', errors='replace'))
+
+                except OSError as e:
+                    logger.error(f"PTY read error: {e}")
                     break
-                await websocket.send_text(data.decode('utf-8', errors='ignore'))
-        except OSError:
-            pass # PTY closed
-        except Exception as e:
-            logger.error(f"PTY reader error: {e}")
+                except Exception as e:
+                    logger.error(f"Unexpected error in PTY reader: {e}")
+                    break
         finally:
-            # If PTY closes, kill process
+            logger.info("PTY reader shutting down")
             if proc.poll() is None:
                 proc.terminate()
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
 
-    reader_task = asyncio.create_task(pty_reader())
+    reader_task = asyncio.create_task(pty_to_websocket())
 
-    # Try to open direct PTY for input (still the fastest way)
-    tty_fd = None
-    try:
-        pane_tty = tmux_client.get_pane_tty(session_name, window_name)
-        if pane_tty:
-            tty_fd = os.open(pane_tty, os.O_WRONLY)
-            logger.info(f"Opened direct input PTY: {pane_tty}")
-    except Exception as e:
-        logger.error(f"Failed to open input PTY: {e}")
-
+    # Input handler: WebSocket → PTY Master
     try:
         while True:
             data = await websocket.receive_text()
+
             try:
                 message = json.loads(data)
+
                 if isinstance(message, dict) and "type" in message:
                     if message["type"] == "input":
-                        if tty_fd:
-                            try:
-                                os.write(tty_fd, message["data"].encode())
-                            except Exception:
-                                tmux_client.send_keys(session_name, window_name, message["data"], enter=False)
-                        else:
-                            tmux_client.send_keys(session_name, window_name, message["data"], enter=False)
-                    elif message["type"] == "resize":
-                        cols = message.get("cols")
-                        rows = message.get("rows")
-                        if cols and rows:
-                            # Resize both the tmux window AND our pty wrapper
-                            tmux_client.resize_window(session_name, window_name, int(cols), int(rows))
-                            try:
-                                # Also resize our attach PTY to match
-                                import termios
-                                import struct
-                                import fcntl
-                                winsize = struct.pack("HHHH", int(rows), int(cols), 0, 0)
-                                fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
-                            except Exception as e:
-                                logger.error(f"Failed to resize attach PTY: {e}")
+                        # Write input to PTY master
+                        input_data = message["data"].encode('utf-8')
+                        os.write(master_fd, input_data)
 
+                    elif message["type"] == "resize":
+                        # Resize PTY
+                        cols = int(message.get("cols", 80))
+                        rows = int(message.get("rows", 24))
+
+                        winsize = struct.pack("HHHH", rows, cols, 0, 0)
+                        fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+                        logger.info(f"Resized PTY to {cols}x{rows}")
                 else:
-                    if tty_fd:
-                        os.write(tty_fd, data.encode())
-                    else:
-                        tmux_client.send_keys(session_name, window_name, data, enter=False)
+                    # Fallback: treat as raw input
+                    os.write(master_fd, data.encode('utf-8'))
+
             except json.JSONDecodeError:
-                if tty_fd:
-                    os.write(tty_fd, data.encode())
-                else:
-                    tmux_client.send_keys(session_name, window_name, data, enter=False)
-                
+                # Not JSON, treat as raw input
+                os.write(master_fd, data.encode('utf-8'))
+
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected")
+        logger.info(f"WebSocket disconnected: {terminal_id}")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
     finally:
+        # Cleanup
+        logger.info("Cleaning up PTY resources")
         reader_task.cancel()
-        if tty_fd:
-            try: os.close(tty_fd)
-            except: pass
-        try: os.close(master_fd)
-        except: pass
+
+        try:
+            os.close(master_fd)
+        except:
+            pass
+
         if proc.poll() is None:
             proc.terminate()
-        try: await reader_task
-        except: pass
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+        try:
+            await reader_task
+        except asyncio.CancelledError:
+            pass
 
 
 @app.post("/terminals/{receiver_id}/inbox/messages")

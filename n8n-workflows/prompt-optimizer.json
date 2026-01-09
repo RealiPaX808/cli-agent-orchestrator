@@ -1,0 +1,112 @@
+{
+  "name": "Prompt Optimizer Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "optimize-prompt",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [250, 400],
+      "webhookId": "prompt-optimizer-webhook",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "options": {
+          "systemMessage": "# Prompt Optimizer Agent\n\nYou are a specialized AI agent that optimizes user prompts for software architecture design tasks.\n\n## Your Task\n\nTake the user's raw request and transform it into a well-structured, detailed prompt that a Software Architect AI agent can use to generate a comprehensive architecture design.\n\n## Optimization Rules\n\n1. **Clarify the Objective**: Extract and clearly state what software/system should be built\n2. **Gather Requirements**: Identify functional and non-functional requirements (even if implied)\n3. **Add Context**: Infer reasonable technical context (scale, users, constraints)\n4. **Structure the Output**: Organize into clear sections\n5. **Identify Missing Info**: Note any critical gaps that would need clarification\n\n## Output Format\n\nReturn the optimized prompt in this exact structure:\n\n```\n# Software Architecture Request\n\n## Objective\n[Clear statement of what to build]\n\n## Requirements\n### Functional Requirements\n- [List what the system should do]\n\n### Non-Functional Requirements\n- [Performance, security, scalability needs]\n\n## Technical Context\n- [Target users, scale, constraints]\n\n## Deliverables\n1. System architecture diagram\n2. Tech stack recommendations\n3. Component breakdown\n4. Data model design\n5. API design\n\n## Notes\n[Any gaps or assumptions made]\n```\n\n## Important\n- Be thorough but concise\n- Make reasonable assumptions when details are missing\n- Keep the tone professional and technical\n- Return ONLY the optimized prompt, no conversational filler"
+        }
+      },
+      "id": "ai-agent",
+      "name": "AI Agent - Prompt Optimizer",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [500, 400]
+    },
+    {
+      "parameters": {
+        "model": "claude-3-5-sonnet-20241022",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "anthropic-model",
+      "name": "Anthropic Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.2,
+      "position": [500, 220]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [750, 400]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Prompt Optimizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Prompt Optimizer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Prompt Optimizer": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-09T00:00:00.000Z",
+  "versionId": "3"
+}

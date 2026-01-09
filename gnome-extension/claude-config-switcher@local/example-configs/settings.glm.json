@@ -1,0 +1,23 @@
+{
+  "authProvider": "apiKey",
+  "environmentVariables": {
+    "ANTHROPIC_AUTH_TOKEN": "your-zai-api-key-here",
+    "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
+    "API_TIMEOUT_MS": "3000000"
+  },
+  "modelMappings": {
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "GLM-4.7",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "GLM-4.7",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "GLM-4.5-Air"
+  },
+  "hooks": {
+    "PostToolUse": []
+  },
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true,
+    "ralph-wiggum@claude-code-plugins": true,
+    "typescript-lsp@claude-plugins-official": true
+  }
+}

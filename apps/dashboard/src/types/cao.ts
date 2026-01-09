@@ -19,7 +19,7 @@ export enum ProviderType {
 
 export interface Terminal {
   id: string;
-  name: string;
+  name?: string; // API may not always return name
   provider: ProviderType;
   session_name: string;
   agent_profile?: string;
@@ -52,4 +52,31 @@ export interface InboxMessage {
   message: string;
   status: string;
   created_at: string;
+}
+
+// Cloudscape StatusIndicator type mappings for enums
+// These provide type-safe conversion from CAO enums to Cloudscape StatusIndicator types
+export const TerminalStatusIndicatorType: Record<TerminalStatus, "success" | "in-progress" | "error" | "stopped" | "warning"> = {
+  [TerminalStatus.IDLE]: "stopped",
+  [TerminalStatus.PROCESSING]: "in-progress",
+  [TerminalStatus.COMPLETED]: "success",
+  [TerminalStatus.WAITING_PERMISSION]: "warning",
+  [TerminalStatus.WAITING_USER_ANSWER]: "warning",
+  [TerminalStatus.ERROR]: "error",
+} as const;
+
+export const SessionStatusIndicatorType: Record<SessionStatus, "success" | "stopped"> = {
+  [SessionStatus.ACTIVE]: "success",
+  [SessionStatus.DETACHED]: "stopped",
+  [SessionStatus.TERMINATED]: "stopped",
+} as const;
+
+// Helper functions for StatusIndicator props
+export function getTerminalStatusType(status: TerminalStatus | undefined): "success" | "in-progress" | "error" | "stopped" | "warning" {
+  if (!status) return "stopped";
+  return TerminalStatusIndicatorType[status];
+}
+
+export function getSessionStatusType(status: SessionStatus): "success" | "stopped" {
+  return SessionStatusIndicatorType[status];
 }

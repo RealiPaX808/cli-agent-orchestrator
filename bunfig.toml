@@ -1,0 +1,36 @@
+# Bun configuration for monorepo with Next.js 16 + Turbopack
+
+[install]
+# Enable workspace support
+workspace = true
+
+# Configure hoisting behavior - hoist to root but preserve workspace structure
+lockfile = true
+lockfileSavePath = "./bun.lock"
+
+# Preserve symlinks for proper workspace resolution
+preserveSymlinks = true
+
+# Don't install optional dependencies by default
+optional = false
+
+[install.scopes]
+# Configure scope-specific install behavior if needed
+# "@cli-agent-orchestrator" = { "token" = "" }
+
+[install.cache]
+# Enable bun's install cache
+enabled = true
+
+# Use global cache for faster installs across workspaces
+# Remove this line if you prefer project-local cache
+# globalPath = "~/.bun/install/cache"
+
+[test]
+# Test configuration
+root = false
+
+[run]
+# Run scripts in package directory, not root
+# Preload scripts can be added here if needed
+# preload = ["./scripts/preload.ts"]

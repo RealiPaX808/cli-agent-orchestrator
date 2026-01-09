@@ -1,0 +1,12 @@
+{
+  "uuid": "claude-config-switcher@local",
+  "name": "Claude Config Switcher",
+  "description": "Switch between Claude and GLM configurations with a simple toggle",
+  "version": 1,
+  "shell-version": [
+    "45",
+    "46"
+  ],
+  "url": "https://github.com/yourusername/claude-config-switcher",
+  "settings-schema": "org.gnome.shell.extensions.claude-config-switcher"
+}

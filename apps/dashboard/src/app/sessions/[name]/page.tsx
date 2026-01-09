@@ -1,27 +1,45 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, useCallback, use } from "react";
 import { caoClient } from "@/lib/api-client";
 import { Session, Terminal, ProviderType } from "@/types/cao";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import Button from "@cloudscape-design/components/button";
+import Container from "@cloudscape-design/components/container";
+import Header from "@cloudscape-design/components/header";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import Box from "@cloudscape-design/components/box";
+import Modal from "@cloudscape-design/components/modal";
+import Form from "@cloudscape-design/components/form";
+import FormField from "@cloudscape-design/components/form-field";
+import Select from "@cloudscape-design/components/select";
+import Alert from "@cloudscape-design/components/alert";
+import Spinner from "@cloudscape-design/components/spinner";
+import StatusIndicator from "@cloudscape-design/components/status-indicator";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { WebhookTrigger } from "@/components/session/WebhookTrigger";
+
 export default function SessionDetail({ params }: { params: Promise<{ name: string }> }) {
-  // Unwrap params using use() hook for Next.js 15+
-  const { name } = use(params);
+  const resolvedParams = use(params);
+  const name = resolvedParams.name;
 
   const [session, setSession] = useState<Session | null>(null);
   const [terminals, setTerminals] = useState<Terminal[]>([]);
   const [loading, setLoading] = useState(true);
-  
-  // Create terminal state
+
   const [showAddTerminal, setShowAddTerminal] = useState(false);
-  const [agentProfile, setAgentProfile] = useState("reviewer");
+  const [agentProfile, setAgentProfile] = useState("developer");
   const [provider, setProvider] = useState<string>(ProviderType.Q_CLI);
   const [agents, setAgents] = useState<string[]>([]);
   const [adding, setAdding] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  const fetchData = async () => {
+  const router = useRouter();
+
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       const [sessionData, terminalsData, agentsData] = await Promise.all([
@@ -33,184 +51,272 @@ export default function SessionDetail({ params }: { params: Promise<{ name: stri
       setTerminals(terminalsData);
       setAgents(agentsData);
       if (agentsData.length > 0 && !agentProfile) {
-          setAgentProfile(agentsData[0]);
+        setAgentProfile(agentsData[0]);
       }
     } catch (err) {
-      console.error(err);
+      console.error("Failed to fetch data:", err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [name, agentProfile]);
 
   useEffect(() => {
     fetchData();
-  }, [name]);
+  }, [fetchData]);
 
-  const handleAddTerminal = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleDeleteSession = async () => {
+    try {
+      setDeleting(true);
+      await caoClient.deleteSession(name);
+      router.push("/");
+    } catch (err) {
+      console.error("Failed to delete session:", err);
+    } finally {
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
+  const handleAddTerminal = async () => {
     try {
       setAdding(true);
-      // We need to implement createTerminalInSession in client or use raw fetch
-      // Let's assume we'll add it to client or use a fetch here. 
-      // Actually checking client... it's missing createTerminalInSession.
-      // I'll do a direct fetch for now or update client. updating client is better.
-      const params = new URLSearchParams({
-        provider,
-        agent_profile: agentProfile,
+      await fetch(`/api/sessions/${name}/terminals`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider,
+          agent_profile: agentProfile
+        })
       });
-      
-      await fetch(`/api/sessions/${name}/terminals?${params.toString()}`, {
-        method: "POST"
-      });
-      
       setShowAddTerminal(false);
       fetchData();
     } catch (err) {
-      alert("Failed to add terminal: " + err);
+      console.error("Failed to add terminal:", err);
     } finally {
       setAdding(false);
     }
   };
 
-  if (loading) return <div className="p-8 text-slate-400">Loading session details...</div>;
-  if (!session) return <div className="p-8 text-red-400">Session not found</div>;
+  const contentHeader = (
+    <Header
+      variant="h1"
+      description={`Session ID: ${session?.id || name}`}
+      actions={
+        <SpaceBetween direction="horizontal" size="xs">
+          <Button
+            variant="primary"
+            onClick={() => setShowAddTerminal(true)}
+            iconName="add-plus"
+          >
+            Add Terminal
+          </Button>
+          <Button
+            iconName="remove"
+            onClick={() => setShowDeleteConfirm(true)}
+          >
+            Delete Session
+          </Button>
+        </SpaceBetween>
+      }
+    >
+      Session Details
+    </Header>
+  );
+
+  if (loading) {
+    return (
+      <DashboardLayout
+        breadcrumbs={[
+          { text: "Dashboard", href: "/" },
+          { text: "Sessions", href: "/sessions" },
+          { text: name, href: `/sessions/${name}` },
+        ]}
+        contentHeader={contentHeader}
+      >
+        <Container>
+          <Box textAlign="center" padding={{ top: "xxl", bottom: "xxl" }}>
+            <Spinner size="large" />
+            <Box padding={{ top: "s" }} variant="p" color="text-body-secondary">
+              Loading session details...
+            </Box>
+          </Box>
+        </Container>
+      </DashboardLayout>
+    );
+  }
+
+  if (!session) {
+    return (
+      <DashboardLayout
+        breadcrumbs={[
+          { text: "Home", href: "/" },
+          { text: name, href: `/sessions/${name}` }
+        ]}
+      >
+        <Container>
+          <Alert type="error" header="Session not found">
+            Session "{name}" was not found. It may have been deleted or never existed.
+          </Alert>
+          <Box padding={{ top: "s" }}>
+            <Button href="/">Back to Dashboard</Button>
+          </Box>
+        </Container>
+      </DashboardLayout>
+    );
+  }
+
+  const mainContent = (
+    <SpaceBetween direction="vertical" size="l">
+      <Container
+        header={
+          <Header>
+            {session.name}
+          </Header>
+        }
+      >
+        <SpaceBetween direction="vertical" size="s">
+          <Box variant="small" color="text-body-secondary">
+            {session.id}
+          </Box>
+          <StatusIndicator
+            type={session.status === "active" ? "success" : "stopped"}
+          >
+            {session.status}
+          </StatusIndicator>
+        </SpaceBetween>
+      </Container>
+
+      <WebhookTrigger />
+
+      {terminals.length > 0 && (
+        <Container>
+          <Box padding={{ bottom: "m" }}>
+            <Header>Active Terminals ({terminals.length})</Header>
+          </Box>
+          <SpaceBetween direction="vertical" size="l">
+            {terminals.map((terminal) => (
+              <Container
+                key={terminal.id}
+                header={
+                  <SpaceBetween direction="horizontal" size="xs">
+                    <Box fontWeight="bold">{terminal.name}</Box>
+                    <StatusIndicator
+                      type={terminal.status === "idle" || terminal.status === "processing" ? "success" : "stopped"}
+                    >
+                      {terminal.status}
+                    </StatusIndicator>
+                  </SpaceBetween>
+                }
+              >
+                <Box padding={{ bottom: "s" }} variant="div" color="text-body-secondary">
+                  <SpaceBetween direction="vertical" size="xs">
+                    <Box><strong>Terminal ID:</strong> {terminal.id}</Box>
+                    <Box><strong>Type:</strong> {terminal.provider}</Box>
+                    {terminal.agent_profile && <Box><strong>Agent:</strong> {terminal.agent_profile}</Box>}
+                    <Box><strong>Status:</strong> {terminal.status}</Box>
+                  </SpaceBetween>
+                </Box>
+                <Link href={`/terminals/${terminal.id}`}>
+                  <Button variant="primary">View Terminal</Button>
+                </Link>
+              </Container>
+            ))}
+          </SpaceBetween>
+        </Container>
+      )}
+
+      {terminals.length === 0 && (
+        <Container>
+          <Box textAlign="center" padding={{ top: "xxl", bottom: "xxl" }} variant="p" color="text-body-secondary">
+            No active terminals. Add one to get started.
+          </Box>
+        </Container>
+      )}
+    </SpaceBetween>
+  );
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 p-8">
-      <div className="max-w-6xl mx-auto">
-        <Link href="/" className="text-slate-500 hover:text-sky-400 mb-6 inline-block transition-colors">
-          ← Back to Dashboard
-        </Link>
-        
-        <header className="mb-10 border-b border-slate-800 pb-6 flex justify-between items-start">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <h1 className="text-3xl font-bold text-white">{session.name}</h1>
-              <span className="px-2 py-0.5 rounded text-xs bg-slate-800 text-slate-400 border border-slate-700 font-mono">
-                {session.id}
-              </span>
-            </div>
-            <p className="text-slate-400 flex items-center gap-2">
-              Status: <span className="uppercase text-green-400 font-bold">{session.status}</span>
-            </p>
-          </div>
-          <div className="flex gap-4">
-            <button
-              onClick={async () => {
-                if (!confirm("Are you sure you want to delete this session? All terminals will be killed.")) return;
-                try {
-                  await caoClient.deleteSession(session.name);
-                  // Force hard navigation back to home
-                  window.location.href = "/";
-                } catch (e) {
-                  alert("Failed to delete session: " + e);
-                }
-              }}
-              className="px-4 py-2 bg-red-900/50 hover:bg-red-900 text-red-200 border border-red-800 rounded font-medium transition-colors"
-            >
-              Terminate Session
-            </button>
-            <button
-              onClick={() => setShowAddTerminal(!showAddTerminal)}
-              className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-white font-medium transition-colors"
-            >
-              + Add Terminal
-            </button>
-          </div>
-        </header>
+    <>
+      <DashboardLayout
+        breadcrumbs={[
+          { text: "Dashboard", href: "/" },
+          { text: "Sessions", href: "/sessions" },
+          { text: name, href: `/sessions/${name}` },
+        ]}
+        contentHeader={contentHeader}
+      >
+        {mainContent}
+      </DashboardLayout>
 
-        {showAddTerminal && (
-          <div className="mb-8 p-6 bg-slate-900 border border-slate-700 rounded-xl">
-            <h3 className="text-lg font-semibold mb-4">Add Agent to Session</h3>
-            <form onSubmit={handleAddTerminal} className="flex gap-4 items-end">
-              <div className="flex-1">
-                <label className="block text-sm text-slate-400 mb-1">Agent Profile</label>
-                <select
-                  value={agentProfile}
-                  onChange={(e) => setAgentProfile(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-white"
+      {showDeleteConfirm && (
+        <Modal
+          visible={showDeleteConfirm}
+          onDismiss={() => setShowDeleteConfirm(false)}
+          header="Confirm session deletion"
+          footer={
+            <Box float="right">
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button variant="link" onClick={() => setShowDeleteConfirm(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={handleDeleteSession}
+                  loading={deleting}
                 >
-                  {agents.map((agent) => (
-                    <option key={agent} value={agent}>{agent}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex-1">
-                <label className="block text-sm text-slate-400 mb-1">Provider</label>
-                <select
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-white"
-                >
-                  {Object.values(ProviderType).map((p) => (
-                    <option key={p} value={p}>{p}</option>
-                  ))}
-                </select>
-              </div>
-              <button
-                type="submit"
-                disabled={adding}
-                className="px-6 py-2 bg-green-600 hover:bg-green-500 rounded text-white font-medium"
-              >
-                {adding ? "Adding..." : "Add Agent"}
-              </button>
-            </form>
-          </div>
-        )}
+                  Delete
+                </Button>
+              </SpaceBetween>
+            </Box>
+          }
+        >
+          <Box variant="p" color="text-body-secondary">
+            Are you sure you want to delete this session?
+          </Box>
+        </Modal>
+      )}
 
-        <h2 className="text-xl font-semibold mb-4 text-slate-200">Terminals ({terminals.length})</h2>
-        <div className="grid gap-4">
-          {terminals.map((terminal) => (
-            <Link 
-              href={`/terminals/${terminal.id}`} 
-              key={terminal.id}
-              className="block p-4 bg-slate-900 border border-slate-800 rounded-lg hover:border-sky-500 hover:bg-slate-800/50 transition-all flex justify-between items-center group"
-            >
-              <div>
-                <div className="flex items-center gap-3 mb-1">
-                  <h3 className="font-bold text-sky-400">{terminal.agent_profile || "Unknown Agent"}</h3>
-                  <span className="text-xs text-slate-500 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-                    {terminal.provider}
-                  </span>
-                </div>
-                <div className="text-sm text-slate-400 font-mono flex gap-4">
-                  <span>ID: {terminal.id}</span>
-                  <span>Window: {terminal.name}</span>
-                </div>
-              </div>
-              
-              <div className="text-right">
-                <div className="mb-1">
-                  <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider
-                    ${terminal.status === 'idle' ? 'bg-green-900/50 text-green-400 border border-green-800' : 
-                      terminal.status === 'processing' ? 'bg-blue-900/50 text-blue-400 border border-blue-800' :
-                      'bg-slate-800 text-slate-400 border border-slate-700'}`}>
-                    {terminal.status || 'UNKNOWN'}
-                  </span>
-                </div>
-                <span className="text-xs text-slate-600 group-hover:text-sky-500 transition-colors">
-                  Open Terminal →
-                </span>
-                <button
-                  onClick={async (e) => {
-                    e.preventDefault(); // Prevent navigation
-                    if (!confirm("Kill this terminal?")) return;
-                    try {
-                      await caoClient.deleteTerminal(terminal.id);
-                      fetchData();
-                    } catch (err) {
-                      alert("Failed to kill terminal: " + err);
-                    }
-                  }}
-                  className="ml-4 text-xs text-red-900 hover:text-red-500 transition-colors px-2 py-1 rounded hover:bg-red-950/50"
-                >
-                  [KILL]
-                </button>
-              </div>
-            </Link>
-          ))}
-        </div>
-      </div>
-    </main>
+      {showAddTerminal && (
+        <Modal
+          visible={showAddTerminal}
+          onDismiss={() => setShowAddTerminal(false)}
+          header="Add Terminal to Session"
+          size="medium"
+        >
+          <Form
+            actions={
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button variant="link" onClick={() => setShowAddTerminal(false)}>
+                  Cancel
+                </Button>
+                <Button variant="primary" onClick={handleAddTerminal} loading={adding}>
+                  Add Terminal
+                </Button>
+              </SpaceBetween>
+            }
+          >
+            <FormField label="Agent Profile">
+              <Select
+                selectedOption={agents.find(a => a === agentProfile) ? { value: agentProfile, label: agentProfile } : null}
+                onChange={({ detail }) => setAgentProfile(detail.selectedOption?.value || "")}
+                options={agents.map(agent => ({ value: agent, label: agent }))}
+                placeholder="Choose an agent profile"
+                expandToViewport={true}
+              />
+            </FormField>
+
+            <FormField label="Provider">
+              <Select
+                selectedOption={{ value: provider, label: provider }}
+                onChange={({ detail }) => setProvider(detail.selectedOption?.value || ProviderType.Q_CLI)}
+                options={Object.values(ProviderType).map(p => ({ value: p, label: p }))}
+                placeholder="Choose a provider"
+                expandToViewport={true}
+              />
+            </FormField>
+          </Form>
+        </Modal>
+      )}
+    </>
   );
 }

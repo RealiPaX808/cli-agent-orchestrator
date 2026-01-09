@@ -17,6 +17,21 @@ class CAOClient {
     return this.fetch<Session[]>("/sessions");
   }
 
+  async listSessionsWithTerminals(): Promise<Array<Session & { terminals?: Terminal[] }>> {
+    const sessions = await this.fetch<Session[]>("/sessions");
+    const sessionsWithTerminals = await Promise.all(
+      sessions.map(async (session) => {
+        try {
+          const data = await this.fetch<{ session: Session; terminals: Terminal[] }>(`/sessions/${session.name}`);
+          return { ...data.session, terminals: data.terminals };
+        } catch {
+          return session;
+        }
+      })
+    );
+    return sessionsWithTerminals;
+  }
+
   async getSession(name: string): Promise<Session> {
     const data = await this.fetch<{ session: Session; terminals: Terminal[] }>(`/sessions/${name}`);
     return { ...data.session, terminals: data.terminals };
@@ -75,6 +90,29 @@ class CAOClient {
   // Agents
   async listAgents(): Promise<string[]> {
     return this.fetch<string[]>("/agents");
+  }
+
+  async getAgentContent(agentName: string): Promise<{ content: string }> {
+    return this.fetch<{ content: string }>(`/agents/${agentName}/content`);
+  }
+
+  async listProviders(): Promise<Array<{ value: string; label: string }>> {
+    return this.fetch<Array<{ value: string; label: string }>>("/providers");
+  }
+
+  async installAgent(request: {
+    source_type: "built-in" | "file" | "url";
+    name?: string;
+    path?: string;
+    provider: string;
+  }): Promise<{ success: boolean; agent_name: string; message: string }> {
+    return this.fetch<{ success: boolean; agent_name: string; message: string }>("/agents/install", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+    });
   }
 }
 

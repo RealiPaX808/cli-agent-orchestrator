@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.claude-config-switcher" path="/org/gnome/shell/extensions/claude-config-switcher/">
+    <key name="current-config" type="s">
+      <default>'claude'</default>
+      <summary>Current active configuration</summary>
+      <description>
+        The currently active configuration: 'claude' or 'glm'
+      </description>
+    </key>
+  </schema>
+</schemalist>

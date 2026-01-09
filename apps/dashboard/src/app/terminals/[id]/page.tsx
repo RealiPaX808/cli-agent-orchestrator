@@ -3,10 +3,18 @@
 import { useEffect, useState, useCallback, useRef, use } from "react";
 import { caoClient } from "@/lib/api-client";
 import { Terminal as TerminalType } from "@/types/cao";
-import Link from "next/link";
+import "@xterm/xterm/css/xterm.css";
+
+import Button from "@cloudscape-design/components/button";
+import Container from "@cloudscape-design/components/container";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import Box from "@cloudscape-design/components/box";
+import StatusIndicator from "@cloudscape-design/components/status-indicator";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 export default function TerminalDetail({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+  const resolvedParams = use(params);
+  const id = resolvedParams.id;
 
   const [terminal, setTerminal] = useState<TerminalType | null>(null);
   const [debugStatus, setDebugStatus] = useState<string>("Initializing...");
@@ -15,23 +23,26 @@ export default function TerminalDetail({ params }: { params: Promise<{ id: strin
   const wsRef = useRef<WebSocket | null>(null);
   const fitAddonRef = useRef<any>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const terminalInitializedRef = useRef<boolean>(false);
 
   useEffect(() => {
     caoClient.getTerminal(id).then(setTerminal).catch(err => setDebugStatus("Fetch error: " + err));
   }, [id]);
 
-  const terminalRef = useCallback((container: HTMLDivElement | null) => {
-    if (container === null) {
+  const terminalCallback = useCallback((element: HTMLDivElement | null) => {
+    if (element === null) {
         if (resizeObserverRef.current) resizeObserverRef.current.disconnect();
         if (wsRef.current) wsRef.current.close();
         if (xtermRef.current) xtermRef.current.dispose();
         xtermRef.current = null;
+        fitAddonRef.current = null;
+        terminalInitializedRef.current = false;
         return;
     }
 
-    if (xtermRef.current) return;
+    if (xtermRef.current || terminalInitializedRef.current) return;
 
-    (async () => {
+      (async () => {
       try {
         const { Terminal } = await import("@xterm/xterm");
         const { FitAddon } = await import("@xterm/addon-fit");
@@ -47,34 +58,49 @@ export default function TerminalDetail({ params }: { params: Promise<{ id: strin
 
         const fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
-        term.open(container);
 
+        term.open(element);
+        
         xtermRef.current = term;
         fitAddonRef.current = fitAddon;
+        terminalInitializedRef.current = true;
 
-        // Fit to container - exactly as in official docs
-        fitAddon.fit();
-        setDebugStatus(`Terminal: ${term.cols}x${term.rows}`);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            try {
+              console.log('=== Before Fit ===');
+              console.log('Container:', element.clientWidth, 'x', element.clientHeight);
+              console.log('Terminal:', term.cols, 'x', term.rows);
+              
+              fitAddon.fit();
+              
+              console.log('=== After Fit ===');
+              console.log('Terminal:', term.cols, 'x', term.rows);
+              
+              const core = (term as any)._core;
+              if (core && core._renderService) {
+                const dims = core._renderService.dimensions;
+                console.log('Char size:', dims.css.cell.width, 'x', dims.css.cell.height);
+                console.log('Canvas:', dims.css.canvas.width, 'x', dims.css.canvas.height);
+                console.log('Expected canvas height:', term.rows * dims.css.cell.height);
+              }
 
-        // Resize observer for dynamic sizing
-        const fitAndSync = () => {
-          fitAddon.fit();
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({
-              type: 'resize',
-              cols: term.cols,
-              rows: term.rows
-            }));
-          }
-        };
-
-        const resizeObserver = new ResizeObserver(() => {
-          requestAnimationFrame(fitAndSync);
+              setDebugStatus(`Terminal: ${term.cols}x${term.rows} (${element.clientWidth}x${element.clientHeight}px)`);
+              
+              if (wsRef.current?.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({
+                  type: 'resize',
+                  cols: term.cols,
+                  rows: term.rows
+                }));
+              }
+            } catch (error) {
+              console.warn('Fit failed:', error);
+            }
+          });
         });
-        resizeObserver.observe(container);
-        resizeObserverRef.current = resizeObserver;
 
-        // WebSocket setup
+        // Set up WebSocket
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const wsUrl = `${protocol}//${window.location.host}/api/terminals/${id}/ws`;
 
@@ -83,7 +109,16 @@ export default function TerminalDetail({ params }: { params: Promise<{ id: strin
 
         ws.onopen = () => {
           setDebugStatus("Connected");
-          fitAndSync();
+          
+          if (xtermRef.current && fitAddonRef.current) {
+            fitAddonRef.current.fit();
+            console.log('WebSocket connected - sending resize:', xtermRef.current.cols, 'x', xtermRef.current.rows);
+            ws.send(JSON.stringify({
+              type: 'resize',
+              cols: xtermRef.current.cols,
+              rows: xtermRef.current.rows
+            }));
+          }
         };
 
         ws.onmessage = (event) => {
@@ -113,54 +148,95 @@ export default function TerminalDetail({ params }: { params: Promise<{ id: strin
     })();
   }, [id]);
 
-  if (!terminal) return <div className="p-8 text-slate-400">Loading terminal metadata...</div>;
+  if (!terminal) {
+    return (
+      <DashboardLayout
+        breadcrumbs={[
+          { text: "Dashboard", href: "/" },
+          { text: "Sessions", href: "/sessions" },
+          { text: "Terminal", href: `/terminals/${id}` },
+        ]}
+      >
+        <Container>
+          <Box textAlign="center" padding={{ top: "xxl", bottom: "xxl" }}>
+            <span>Loading terminal metadata...</span>
+          </Box>
+        </Container>
+      </DashboardLayout>
+    );
+  }
+
+  const actions = (
+    <SpaceBetween direction="horizontal" size="xs">
+      <Box
+        variant="small"
+        color="text-body-secondary"
+        padding={{ horizontal: "s", vertical: "xxs" }}
+      >
+        {debugStatus}
+      </Box>
+      <StatusIndicator
+        type={
+          terminal.status === 'idle' ? 'success' :
+          terminal.status === 'processing' ? 'in-progress' :
+          'stopped'
+        }
+      >
+        {terminal.status}
+      </StatusIndicator>
+      <Button
+        onClick={() => {
+            xtermRef.current?.clear();
+            fitAddonRef.current?.fit();
+        }}
+      >
+        Clear
+      </Button>
+      <Button
+        onClick={() => {
+            fitAddonRef.current?.fit();
+            setDebugStatus(`Terminal: ${xtermRef.current?.cols}x${xtermRef.current?.rows}`);
+        }}
+      >
+        Force Fit
+      </Button>
+    </SpaceBetween>
+  );
 
   return (
-    <main className="h-screen w-screen bg-slate-950 text-slate-100 flex flex-col overflow-hidden">
-      <header className="flex-none px-4 py-2 border-b border-slate-800 bg-slate-900 flex justify-between items-center z-10">
-        <div className="flex items-center gap-4">
-          <Link href={`/sessions/${terminal.session_name}`} className="text-slate-500 hover:text-white transition-colors text-sm">
-             ← Back
-          </Link>
-          <div>
-            <h1 className="font-bold text-base text-white flex items-center gap-2">
-              {terminal.agent_profile}
-              <span className="text-xs font-normal text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700 font-mono">
-                {terminal.name}
-              </span>
-            </h1>
-            <div className="text-xs text-slate-400 font-mono">{terminal.id} • {terminal.provider}</div>
-          </div>
+    <DashboardLayout
+      breadcrumbs={[
+        { text: "Dashboard", href: "/" },
+        { text: "Sessions", href: "/sessions" },
+        { text: terminal.session_name || "Session", href: `/sessions/${terminal.session_name}` },
+        { text: "Terminal", href: `/terminals/${id}` },
+      ]}
+      contentType="default"
+    >
+      <div style={{ 
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minHeight: '80vh'
+      }}>
+        <div style={{
+          padding: '10px 0',
+          marginBottom: '10px'
+        }}>
+          {actions}
         </div>
-        <div className="flex items-center gap-3">
-           <div className="text-xs text-yellow-500 font-mono bg-yellow-900/20 px-2 py-1 rounded">
-             {debugStatus}
-           </div>
-           <div className="flex items-center gap-2 text-xs text-slate-400">
-              <span>Status:</span>
-              <span className={`uppercase font-bold ${
-                terminal.status === 'idle' ? 'text-green-400' :
-                terminal.status === 'processing' ? 'text-blue-400' :
-                'text-slate-400'
-              }`}>
-                {terminal.status}
-              </span>
-           </div>
-           <button
-              onClick={() => {
-                  xtermRef.current?.clear();
-                  fitAddonRef.current?.fit();
-              }}
-              className="px-3 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded text-slate-300 transition-colors"
-           >
-              Clear
-           </button>
-        </div>
-      </header>
-
-      <div className="flex-1 w-full bg-[#020617] overflow-hidden relative">
-        <div ref={terminalRef} className="absolute inset-0" />
+        <div 
+          ref={terminalCallback}
+          style={{
+            flex: 1,
+            minHeight: '600px',
+            overflow: 'hidden',
+            background: '#020617',
+            border: '1px solid #334155',
+            borderRadius: '4px'
+          }}
+        />
       </div>
-    </main>
+    </DashboardLayout>
   );
 }

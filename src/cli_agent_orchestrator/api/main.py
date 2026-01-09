@@ -18,7 +18,15 @@ from typing import Annotated, Dict, List, Optional
 import aiofiles
 import requests
 
-from fastapi import FastAPI, HTTPException, Path as PathParam, Query, status, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Path as PathParam,
+    Query,
+    status,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel, Field, field_validator
 from watchdog.observers.polling import PollingObserver
 
@@ -43,7 +51,10 @@ from cli_agent_orchestrator.constants import (
 from cli_agent_orchestrator.models.kiro_agent import KiroAgentConfig
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.q_agent import QAgentConfig
-from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile, list_installed_agents
+from cli_agent_orchestrator.utils.agent_profiles import (
+    load_agent_profile,
+    list_installed_agents,
+)
 
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalId
@@ -61,6 +72,31 @@ from cli_agent_orchestrator.utils.logging import setup_logging
 from cli_agent_orchestrator.utils.terminal import generate_session_name
 
 logger = logging.getLogger(__name__)
+
+
+class WebhookExecuteRequest(BaseModel):
+    webhookUrl: str = Field(..., description="The webhook URL to send the request to")
+    method: str = Field(
+        default="POST", description="HTTP method (GET, POST, PUT, DELETE)"
+    )
+    payload: str = Field(..., description="Text payload to send to the webhook")
+    headers: Optional[Dict[str, str]] = Field(
+        default=None, description="Optional HTTP headers"
+    )
+
+    @field_validator("method")
+    @classmethod
+    def validate_method(cls, v: str) -> str:
+        allowed_methods = ["GET", "POST", "PUT", "DELETE"]
+        if v.upper() not in allowed_methods:
+            raise ValueError(f"Method must be one of {allowed_methods}")
+        return v.upper()
+
+
+class WebhookExecuteResponse(BaseModel):
+    status_code: int
+    response_body: str
+    success: bool
 
 
 async def flow_daemon():
@@ -91,9 +127,14 @@ class TerminalOutputResponse(BaseModel):
 
 
 class InstallAgentRequest(BaseModel):
-    source_type: str = Field(..., description="Source type: 'built-in', 'file', or 'url'")
+    source_type: str = Field(
+        ..., description="Source type: 'built-in', 'file', 'url', or 'content'"
+    )
     name: Optional[str] = Field(None, description="Agent name (for built-in)")
     path: Optional[str] = Field(None, description="File path or URL")
+    content: Optional[str] = Field(
+        None, description="Markdown content (for content type)"
+    )
     provider: str = Field(..., description="Provider to install for")
 
 
@@ -153,50 +194,102 @@ async def list_agents() -> List[str]:
         )
 
 
+@app.get("/agents/{agent_name}/content")
+async def get_agent_content(agent_name: str) -> Dict[str, str]:
+    try:
+        local_profile = LOCAL_AGENT_STORE_DIR / f"{agent_name}.md"
+        if local_profile.exists():
+            return {"content": local_profile.read_text()}
+
+        agent_store = resources.files("cli_agent_orchestrator.agent_store")
+        profile_file = agent_store / f"{agent_name}.md"
+
+        if not profile_file.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Agent '{agent_name}' not found",
+            )
+
+        return {"content": profile_file.read_text()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get agent content: {str(e)}",
+        )
+
+
+@app.get("/providers")
+async def list_providers() -> List[Dict[str, str]]:
+    """List all available providers."""
+    try:
+        return [
+            {"value": provider.value, "label": provider.name.replace("_", " ").title()}
+            for provider in ProviderType
+        ]
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list providers: {str(e)}",
+        )
+
+
 @app.post("/agents/install")
 async def install_agent(request: InstallAgentRequest) -> Dict:
     """Install an agent."""
     try:
         agent_name = request.name
-        
+
         # Handle different source types
         if request.source_type == "url":
             if not request.path:
                 raise ValueError("Path (URL) is required for url source")
-            
+
             LOCAL_AGENT_STORE_DIR.mkdir(parents=True, exist_ok=True)
             response = requests.get(request.path)
             response.raise_for_status()
             content = response.text
-            
+
             filename = Path(request.path).name
             if not filename.endswith(".md"):
                 raise ValueError("URL must point to a .md file")
-                
+
             dest_file = LOCAL_AGENT_STORE_DIR / filename
             dest_file.write_text(content)
             agent_name = dest_file.stem
-            
+
         elif request.source_type == "file":
             if not request.path:
                 raise ValueError("Path is required for file source")
-                
+
             source_path = Path(request.path)
             if not source_path.exists():
                 raise FileNotFoundError(f"Source file not found: {request.path}")
             if not source_path.suffix == ".md":
                 raise ValueError("File must be a .md file")
-                
+
             LOCAL_AGENT_STORE_DIR.mkdir(parents=True, exist_ok=True)
             dest_file = LOCAL_AGENT_STORE_DIR / source_path.name
             dest_file.write_text(source_path.read_text())
             agent_name = dest_file.stem
-            
+
         elif request.source_type == "built-in":
             if not request.name:
                 raise ValueError("Name is required for built-in source")
             agent_name = request.name
-            
+
+        elif request.source_type == "content":
+            if not request.content:
+                raise ValueError("Content is required for content source")
+            if not request.name:
+                raise ValueError("Name is required for content source")
+
+            LOCAL_AGENT_STORE_DIR.mkdir(parents=True, exist_ok=True)
+            dest_file = LOCAL_AGENT_STORE_DIR / f"{request.name}.md"
+            dest_file.write_text(request.content)
+            agent_name = request.name
+
         else:
             raise ValueError(f"Invalid source type: {request.source_type}")
 
@@ -216,8 +309,8 @@ async def install_agent(request: InstallAgentRequest) -> Dict:
         else:
             agent_store = resources.files("cli_agent_orchestrator.agent_store")
             source_file = agent_store / f"{agent_name}.md"
-            if not source_file.is_file(): # Check if built-in exists
-                 raise FileNotFoundError(f"Built-in agent '{agent_name}' not found")
+            if not source_file.is_file():  # Check if built-in exists
+                raise FileNotFoundError(f"Built-in agent '{agent_name}' not found")
 
         # Copy markdown file to agent-context directory
         dest_file = AGENT_CONTEXT_DIR / f"{profile.name}.md"
@@ -278,14 +371,16 @@ async def install_agent(request: InstallAgentRequest) -> Dict:
             "success": True,
             "agent_name": profile.name,
             "provider": request.provider,
-            "file": str(agent_file) if agent_file else None
+            "file": str(agent_file) if agent_file else None,
         }
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Install failed: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
 
 
 @app.get("/health")
@@ -508,12 +603,12 @@ async def websocket_endpoint(websocket: WebSocket, terminal_id: str):
     # Start tmux attach (WITHOUT -r flag, we need full interaction)
     target = f"{session_name}:{window_name}"
     proc = subprocess.Popen(
-        ['tmux', 'attach-session', '-t', target],
+        ["tmux", "attach-session", "-t", target],
         stdin=slave_fd,
         stdout=slave_fd,
         stderr=slave_fd,
         preexec_fn=os.setsid,  # New session for clean process management
-        close_fds=True
+        close_fds=True,
     )
     os.close(slave_fd)  # Close slave in parent
     logger.info(f"PTY created for {target}, master_fd={master_fd}, pid={proc.pid}")
@@ -536,7 +631,9 @@ async def websocket_endpoint(websocket: WebSocket, terminal_id: str):
                     if not readable:
                         # Check if process died
                         if proc.poll() is not None:
-                            logger.info(f"PTY process exited with code {proc.returncode}")
+                            logger.info(
+                                f"PTY process exited with code {proc.returncode}"
+                            )
                             break
                         continue
 
@@ -547,7 +644,7 @@ async def websocket_endpoint(websocket: WebSocket, terminal_id: str):
                         break
 
                     # Send to WebSocket
-                    await websocket.send_text(data.decode('utf-8', errors='replace'))
+                    await websocket.send_text(data.decode("utf-8", errors="replace"))
 
                 except OSError as e:
                     logger.error(f"PTY read error: {e}")
@@ -577,24 +674,46 @@ async def websocket_endpoint(websocket: WebSocket, terminal_id: str):
                 if isinstance(message, dict) and "type" in message:
                     if message["type"] == "input":
                         # Write input to PTY master
-                        input_data = message["data"].encode('utf-8')
+                        input_data = message["data"].encode("utf-8")
                         os.write(master_fd, input_data)
 
                     elif message["type"] == "resize":
-                        # Resize PTY
                         cols = int(message.get("cols", 80))
                         rows = int(message.get("rows", 24))
 
                         winsize = struct.pack("HHHH", rows, cols, 0, 0)
                         fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
-                        logger.info(f"Resized PTY to {cols}x{rows}")
+
+                        try:
+                            subprocess.run(
+                                [
+                                    "tmux",
+                                    "refresh-client",
+                                    "-t",
+                                    f"{session_name}:{window_name}",
+                                ],
+                                check=False,
+                                timeout=1,
+                            )
+
+                            await asyncio.sleep(0.05)
+
+                            tmux_client.resize_window(
+                                session_name, window_name, cols, rows
+                            )
+                            logger.info(f"Resized PTY and tmux window to {cols}x{rows}")
+                        except Exception as e:
+                            logger.error(f"Failed to resize tmux window: {e}")
+                            logger.info(
+                                f"PTY resized to {cols}x{rows} (tmux resize failed)"
+                            )
                 else:
                     # Fallback: treat as raw input
-                    os.write(master_fd, data.encode('utf-8'))
+                    os.write(master_fd, data.encode("utf-8"))
 
             except json.JSONDecodeError:
                 # Not JSON, treat as raw input
-                os.write(master_fd, data.encode('utf-8'))
+                os.write(master_fd, data.encode("utf-8"))
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected: {terminal_id}")
@@ -651,7 +770,9 @@ async def create_inbox_message_endpoint(
 @app.get("/terminals/{terminal_id}/inbox/messages")
 async def get_inbox_messages_endpoint(
     terminal_id: TerminalId,
-    limit: int = Query(default=10, le=100, description="Maximum number of messages to retrieve"),
+    limit: int = Query(
+        default=10, le=100, description="Maximum number of messages to retrieve"
+    ),
     status: Optional[str] = Query(default=None, description="Filter by message status"),
 ) -> List[Dict]:
     """Get inbox messages for a terminal.
@@ -689,7 +810,9 @@ async def get_inbox_messages_endpoint(
                     "receiver_id": msg.receiver_id,
                     "message": msg.message,
                     "status": msg.status.value,
-                    "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                    "created_at": msg.created_at.isoformat()
+                    if msg.created_at
+                    else None,
                 }
             )
 
@@ -704,6 +827,54 @@ async def get_inbox_messages_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve inbox messages: {str(e)}",
+        )
+
+
+@app.post("/webhooks/execute", response_model=WebhookExecuteResponse)
+async def execute_webhook(request: WebhookExecuteRequest) -> WebhookExecuteResponse:
+    """Execute a webhook request with the provided configuration.
+
+    Args:
+        request: Webhook configuration including URL, method, payload, and headers
+
+    Returns:
+        WebhookExecuteResponse with status code, response body, and success flag
+
+    Raises:
+        HTTPException: If webhook execution fails
+    """
+    try:
+        headers = request.headers or {}
+        headers.setdefault("Content-Type", "text/plain")
+
+        response = requests.request(
+            method=request.method,
+            url=request.webhookUrl,
+            data=request.payload,
+            headers=headers,
+            timeout=30,
+        )
+
+        return WebhookExecuteResponse(
+            status_code=response.status_code,
+            response_body=response.text,
+            success=200 <= response.status_code < 300,
+        )
+
+    except requests.exceptions.Timeout:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Webhook request timed out after 30 seconds",
+        )
+    except requests.exceptions.ConnectionError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to connect to webhook URL",
+        )
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Webhook execution failed: {str(e)}",
         )
 
 

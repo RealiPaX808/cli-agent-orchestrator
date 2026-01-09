@@ -1,0 +1,21 @@
+{
+  "name": "cli-agent-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter dashboard dev",
+    "build": "bun run --filter dashboard build",
+    "start": "bun run --filter dashboard start"
+  },
+  "devDependencies": {
+    "@next/swc-linux-x64-gnu": "^16.1.1",
+    "@types/bun": "latest"
+  },
+  "trustedDependencies": [
+    "sharp",
+    "unrs-resolver"
+  ]
+}

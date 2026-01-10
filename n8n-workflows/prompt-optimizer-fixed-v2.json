@@ -1,0 +1,148 @@
+{
+  "name": "Prompt Optimizer Agent (Fixed)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "optimize-prompt",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [250, 400]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Hier ist die rohe Produkt-Idee die ich optimiert haben moechte:\n\n\"\"\"\n{{ $json.prompt }}\n\"\"\"\n\nErstelle daraus einen Architecture Briefing Prompt nach den Vorgaben.",
+        "options": {
+          "systemMessage": "## WICHTIG - LESE ZUERST!\n\nDu bekommst eine ROHE PRODUKT-IDEE vom User. Deine einzige Aufgabe ist es, daraus einen optimierten ARCHITEKTUR-BRIEFING PROMPT zu erstellen.\n\n### BEISPIELE - So solltest du arbeiten:\n\nINPUT: \"Ich brauche eine App fuer Dog Walking wie Uber\"\nOUTPUT: Ein Prompt der den Architekten bittet, eine Dog-Walking-App mit Geo-Tracking, Payment, User-Ratings etc. zu designen.\n\nINPUT: \"Chat App mit Verschluesselung\"\nOUTPUT: Ein Prompt der den Architekten bittet, eine E2E-Encrypted Chat App mit Signal-Protocol, WebSocket, Key-Management etc. zu designen.\n\n### WAS DU NICHT TUN SOLLST (Negative Examples):\n\n- FALSCH: Designe NICHT den Prompt Optimizer selbst\n- FALSCH: Designe KEINE Tools oder Workflows  \n- FALSCH: Designe KEINE Developer Tools\n- RICHTIG: Der User will ein PRODUKT designed haben (App, System, Service)\n\n### DEIN PROZESS:\n\n1. ANALYSE: Was will der User bauen? Was ist der Kernnutzen?\n2. ANREICHERUNG: Leite logische Tech-Standards ab (Mobile App → React Native, Echtzeit → WebSocket, etc.)\n3. STRUKTURIERUNG: Erstelle einen klaren Architektur-Briefing Prompt\n\n### OUTPUT FORMAT (nur das ausgeben):\n\n```\n[ARCHITECTURE BRIEFING]\n\n1. PROJEKTUEBERSICHT\n* Name & Ziel: [Was wird gebaut?]\n* Domain: [z.B. FinTech, E-Commerce, Social, IoT]\n* Key Features: [Liste der Hauptfunktionen]\n\n2. TECHNISCHE VORGABEN (Tech Stack)\n* Frontend: [Vorschlag mit Begründung]\n* Backend: [Vorschlag mit Begründung]\n* Database: [Vorschlag mit Begründung]\n* Infrastructure: [Vorschlag mit Begründung]\n\n3. NICHT-FUNKTIONALE ANFORDERUNGEN\n* Skalierbarkeit: [z.B. 10k Concurrent Users]\n* Sicherheit: [z.B. GDPR, Encryption, Auth]\n* Performance: [z.B. Latency < 200ms]\n\n4. ARCHITEKTUR-ARTEFAKTE\nBitte erstelle:\n1. C4 Level 1 Diagramm (System Context) - Mermaid Syntax\n2. C4 Level 2 Diagramm (Container View) - Mermaid Syntax\n3. ER-Diagramm (Datenmodell) - Mermaid Syntax\n4. Trade-off Analyse: Warum dieser Stack?\n\n5. BESONDERE HERAUSFORDERUNGEN\n* [Spezifische Anforderungen aus der User-Idee]\n```\n\n### REGELN:\n* Sei spezifisch: \"schnell\" → \"Latency < 200ms\"\n* Sei meinungsstark: Waehle den besten Stack fuer den Use-Case\n* Nutze Fachbegriffe: Microservices, Event-Driven, JWT, OAuth2, ACID, CAP\n* Fordere Mermaid.js Diagramme",
+          "maxIterations": 1
+        }
+      },
+      "id": "ai-agent",
+      "name": "AI Agent",
+      "type": "nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [500, 400]
+    },
+    {
+      "parameters": {
+        "model": {
+          "mode": "id",
+          "value": "glm-4.7"
+        },
+        "options": {
+          "baseURL": "https://api.z.ai/api/paas/v4/",
+          "temperature": 0.3,
+          "maxTokens": 4096
+        }
+      },
+      "id": "openai-model",
+      "name": "OpenAI Chat Model",
+      "type": "nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [750, 400],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "optimized",
+              "name": "optimizedPrompt",
+              "value": "={{ $json.output }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-result",
+      "name": "Extract Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1250, 400]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Extract Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Result": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

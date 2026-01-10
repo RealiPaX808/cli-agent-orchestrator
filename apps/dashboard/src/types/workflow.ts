@@ -28,13 +28,14 @@ export interface NodeConfig extends Record<string, unknown> {
   provider?: ProviderType;
   message?: string;
   waitForCompletion?: boolean;
-  condition?: string; // For decision nodes
+  condition?: string;
   timeout?: number;
   retries?: number;
-  webhookUrl?: string; // For webhook nodes
-  webhookMethod?: 'GET' | 'POST' | 'PUT' | 'DELETE'; // HTTP method
-  webhookHeaders?: Record<string, string>; // Custom headers
-  webhookPayload?: string; // Text to send as payload
+  webhookUrl?: string;
+  webhookMethod?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  webhookHeaders?: Record<string, string>;
+  webhookPayload?: string;
+  isPromptInput?: boolean;
 }
 
 // Workflow Node Data

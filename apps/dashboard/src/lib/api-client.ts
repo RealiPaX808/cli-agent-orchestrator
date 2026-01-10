@@ -37,13 +37,16 @@ class CAOClient {
     return { ...data.session, terminals: data.terminals };
   }
 
-  async createSession(provider: string, agentProfile: string, sessionName?: string): Promise<Terminal> {
+  async createSession(provider: string, agentProfile: string, sessionName?: string, workflowId?: string): Promise<Terminal> {
     const params = new URLSearchParams({
       provider,
       agent_profile: agentProfile,
     });
     if (sessionName) {
       params.append("session_name", sessionName);
+    }
+    if (workflowId) {
+      params.append("workflow_id", workflowId);
     }
     return this.fetch<Terminal>(`/sessions?${params.toString()}`, {
       method: "POST",

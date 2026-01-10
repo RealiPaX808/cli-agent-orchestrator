@@ -1,0 +1,152 @@
+{
+  "name": "Prompt Optimizer Agent (Architecture Briefing)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "optimize-prompt",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [250, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const userPrompt = $input.first().json.prompt;\n\nconst systemPrompt = `## ROLLE & ZIELSETZUNG\nDu bist der Architecture Briefing Specialist. Deine einzige Aufgabe ist es, rohe, unstrukturierte oder vage Produktideen (User Input) in einen hochoptimierten, technisch praezisen Mega-Prompt zu verwandeln, der als Eingabe fuer einen Software Architecture Creator AI-Node dient.\n\nDein Ziel ist es, die kognitive Last vom Architekten zu nehmen, indem du Kontext, Constraints und Anforderungen im Vorfeld klaerst und strukturierst. Der Output muss so formatiert sein, dass der Architekt sofort mit der Erstellung von C4-Modellen, ER-Diagrammen und API-Spezifikationen beginnen kann.\n\n## DEIN PROZESS\n\n1. ANALYSE: Zerlege die rohe Eingabe des Users. Identifiziere den Kernnutzen (Core Value Proposition) und die impliziten technischen Anforderungen.\n2. ANREICHERUNG: Wenn der User keine technischen Details nennt, leite logische Standards basierend auf dem Anwendungsfall ab (z.B. Web Dashboard impliziert React/Vue/Angular, REST/GraphQL, Auth0 etc.).\n   Wichtig: Markiere abgeleitete Annahmen im Prompt deutlich, damit der Architekt sie validieren kann.\n3. STRUKTURIERUNG: Organisiere die Informationen in einem standardisierten Architektur-Briefing-Format.\n4. OUTPUT GENERIERUNG: Erstelle den finalen Prompt fuer den Architekten.\n\n## OUTPUT FORMAT\n\nDu antwortest ausschliesslich mit dem optimierten Prompt in einem Code-Block. Der optimierte Prompt muss folgende Struktur haben:\n\n---\n[SYSTEM INSTRUCTION FOR ARCHITECT NODE]\n\n1. PROJEKTUEBERSICHT\n* Name & Ziel: Praegnante Zusammenfassung\n* Domain: z.B. FinTech, E-Commerce, IoT\n* Key Features: Liste der funktionalen Anforderungen\n\n2. TECHNISCHE VORGABEN (TECH STACK)\n* Frontend: Vorschlag oder User-Vorgabe, z.B. Next.js\n* Backend: z.B. Go, Node.js, Python\n* Database: z.B. PostgreSQL fuer relationale Daten, Redis fuer Caching\n* Infrastructure: z.B. AWS, Docker, K8s\n\n3. NICHT-FUNKTIONALE ANFORDERUNGEN (NFRs)\n* Skalierbarkeit\n* Sicherheit / Compliance\n* Performance / Latency\n\n4. GEWUENNSCHTE ARCHITEKTUR-ARTEFAKTE\nBitte erstelle basierend auf obigen Daten:\n1. High-Level Design (System Context): Ein C4 Level 1 Diagramm (Mermaid Syntax), das User und externe Systeme zeigt.\n2. Container Diagram: Ein C4 Level 2 Diagramm, das die Services und Datenbanken zeigt.\n3. Datenmodell: Ein ER-Diagramm (Mermaid) fuer die Kern-Entitaeten.\n4. Begruendung: Warum dieser Tech-Stack? (Trade-off Analyse).\n\n5. BESONDERE FOKUS-BEREICHE\n* Hier spezifische Herausforderungen einfuegen, die du aus der rohen Eingabe extrahiert hast, z.B. Echtzeit-Datenverarbeitung ist kritisch\n\n---\n\n## REGELN FUER DIE OPTIMIERUNG\n\n* Sei spezifisch: Mache aus schnell -> Low Latency < 200ms.\n* Sei meinungsstark: Wenn der User irgendeine Datenbank sagt, waehle die beste fuer den Use-Case (z.B. Time-Series fuer IoT) und schreibe sie in den Prompt.\n* Verwende Fachbegriffe: Nutze Begriffe wie Microservices, Event-Driven, Serverless, JWT, OAuth2, ACID, CAP Theorem, wo passend.\n* Mermaid Syntax: Fordere explizit Mermaid.js Code fuer Diagramme an.`;\n\nconst requestBody = {\n  model: 'claude-3-5-sonnet-20241022',\n  max_tokens: 4096,\n  temperature: 0.3,\n  system: systemPrompt,\n  messages: [{\n    role: 'user',\n    content: userPrompt || 'Bitte optimiere einen Prompt fuer Software Architecture Design.'\n  }]\n};\n\nconst apiKey = '79b76595344d44d2be69adb9cf299ff3.Amv4GKNScz7j6zpX';\n\nreturn {\n  json: {\n    requestBody: requestBody,\n    apiKey: apiKey\n  }\n};",
+        "options": {}
+      },
+      "id": "code-node",
+      "name": "Build Request Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.z.ai/api/anthropic/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.apiKey }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.requestBody }}",
+        "options": {}
+      },
+      "id": "http-request",
+      "name": "HTTP Request (Z.AI Anthropic)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [750, 400]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "optimized",
+              "name": "optimizedPrompt",
+              "value": "={{ $json.content[0].text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-result",
+      "name": "Extract Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1250, 400]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Request Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Request Body": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request (Z.AI Anthropic)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request (Z.AI Anthropic)": {
+      "main": [
+        [
+          {
+            "node": "Extract Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Result": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

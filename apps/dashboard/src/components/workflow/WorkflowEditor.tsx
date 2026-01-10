@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ReactFlow,
@@ -12,6 +12,7 @@ import {
   BackgroundVariant,
   Connection,
   Panel,
+  Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { WorkflowAgentNode } from './nodes/WorkflowAgentNode';
@@ -19,6 +20,7 @@ import { WebhookNode } from './nodes/WebhookNode';
 import { Workflow, WorkflowNode, WorkflowEdge, WorkflowNodeType } from '@/types/workflow';
 import { ProviderType } from '@/types/cao';
 import { WorkflowStorage } from '@/lib/workflow-storage';
+import { caoClient } from '@/lib/api-client';
 import Button from '@cloudscape-design/components/button';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Input from '@cloudscape-design/components/input';
@@ -27,6 +29,7 @@ import FormField from '@cloudscape-design/components/form-field';
 import Modal from '@cloudscape-design/components/modal';
 import Box from '@cloudscape-design/components/box';
 import Textarea from '@cloudscape-design/components/textarea';
+import Checkbox from '@cloudscape-design/components/checkbox';
 
 const nodeTypes = {
   agent_spawn: WorkflowAgentNode,
@@ -59,15 +62,89 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
   const [webhookUrl, setWebhookUrl] = useState('');
   const [webhookMethod, setWebhookMethod] = useState<'GET' | 'POST' | 'PUT' | 'DELETE'>('POST');
   const [webhookPayload, setWebhookPayload] = useState('');
+  const [isPromptInput, setIsPromptInput] = useState(false);
+  const [showDeleteEdgeModal, setShowDeleteEdgeModal] = useState(false);
+  const [edgeToDelete, setEdgeToDelete] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [availableAgents, setAvailableAgents] = useState<string[]>([]);
+
+  useEffect(() => {
+    const loadAgents = async () => {
+      try {
+        const agents = await caoClient.listAgents();
+        setAvailableAgents(agents);
+      } catch (error) {
+        console.error('Failed to load agents:', error);
+      }
+    };
+    loadAgents();
+  }, []);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds) as WorkflowEdge[]),
     [setEdges]
   );
 
+  const handleEdgeDoubleClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
+    setEdgeToDelete(edge.id);
+    setShowDeleteEdgeModal(true);
+  }, []);
+
+  const handleEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
+    event.preventDefault();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      edgeId: edge.id,
+    });
+  }, []);
+
+  const handleDeleteEdge = useCallback(() => {
+    if (edgeToDelete) {
+      setEdges((eds) => eds.filter((e) => e.id !== edgeToDelete));
+      setEdgeToDelete(null);
+      setShowDeleteEdgeModal(false);
+    }
+  }, [edgeToDelete, setEdges]);
+
+  const handleDeleteEdgeFromContextMenu = useCallback(() => {
+    if (contextMenu) {
+      setEdges((eds) => eds.filter((e) => e.id !== contextMenu.edgeId));
+      setContextMenu(null);
+    }
+  }, [contextMenu, setEdges]);
+
   const handleAddNode = () => {
+    setEditingNodeId(null);
+    setNodeName('');
+    setAgentProfile('');
+    setProvider('');
+    setWebhookUrl('');
+    setWebhookMethod('POST');
+    setWebhookPayload('');
+    setIsPromptInput(false);
+    setSelectedNodeType(WorkflowNodeType.AGENT_SPAWN);
     setShowNodeConfig(true);
   };
+
+  const handleNodeDoubleClick = useCallback((_event: React.MouseEvent, node: WorkflowNode) => {
+    setEditingNodeId(node.id);
+    setSelectedNodeType(node.data.type);
+    setNodeName(node.data.label);
+    
+    if (node.data.type === WorkflowNodeType.WEBHOOK) {
+      setWebhookUrl(node.data.config.webhookUrl || '');
+      setWebhookMethod(node.data.config.webhookMethod || 'POST');
+      setWebhookPayload(node.data.config.webhookPayload || '');
+      setIsPromptInput(node.data.config.isPromptInput || false);
+    } else {
+      setAgentProfile(node.data.config.agentProfile || '');
+      setProvider((node.data.config.provider as ProviderType) || '');
+    }
+    
+    setShowNodeConfig(true);
+  }, []);
 
   const handleCreateNode = () => {
     const config: any = {};
@@ -76,31 +153,52 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
       config.webhookUrl = webhookUrl;
       config.webhookMethod = webhookMethod;
       config.webhookPayload = webhookPayload;
+      config.isPromptInput = isPromptInput;
     } else {
       config.agentProfile = agentProfile;
       config.provider = provider || undefined;
     }
 
-    const newNode: WorkflowNode = {
-      id: `node-${Date.now()}`,
-      type: selectedNodeType,
-      position: { x: 250, y: 100 },
-      data: {
+    if (editingNodeId) {
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === editingNodeId
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  type: selectedNodeType,
+                  label: nodeName || 'New Node',
+                  config,
+                },
+              }
+            : n
+        )
+      );
+    } else {
+      const newNode: WorkflowNode = {
         id: `node-${Date.now()}`,
         type: selectedNodeType,
-        label: nodeName || 'New Node',
-        config,
-      },
-    };
+        position: { x: 250, y: 100 },
+        data: {
+          id: `node-${Date.now()}`,
+          type: selectedNodeType,
+          label: nodeName || 'New Node',
+          config,
+        },
+      };
+      setNodes((nds) => [...nds, newNode]);
+    }
 
-    setNodes((nds) => [...nds, newNode]);
     setShowNodeConfig(false);
+    setEditingNodeId(null);
     setNodeName('');
     setAgentProfile('');
     setProvider('');
     setWebhookUrl('');
     setWebhookMethod('POST');
     setWebhookPayload('');
+    setIsPromptInput(false);
   };
 
   const handleSave = () => {
@@ -139,9 +237,13 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onEdgeDoubleClick={handleEdgeDoubleClick}
+        onEdgeContextMenu={handleEdgeContextMenu}
+        onNodeDoubleClick={handleNodeDoubleClick}
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.2 }}
+        deleteKeyCode="Delete"
       >
         <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#2d3f4f" />
         <Controls />
@@ -164,10 +266,85 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
         </Panel>
       </ReactFlow>
 
+      {contextMenu && (
+        <>
+          <button
+            type="button"
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'transparent',
+              border: 'none',
+              padding: 0,
+              cursor: 'default',
+              zIndex: 999,
+            }}
+            onClick={() => setContextMenu(null)}
+            aria-label="Close context menu"
+          />
+          <div
+            style={{
+              position: 'fixed',
+              top: contextMenu.y,
+              left: contextMenu.x,
+              backgroundColor: 'white',
+              border: '1px solid #ccc',
+              borderRadius: '4px',
+              padding: '4px 0',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              zIndex: 1000,
+            }}
+          >
+            <button
+              type="button"
+              style={{
+                width: '100%',
+                padding: '8px 16px',
+                border: 'none',
+                background: 'white',
+                cursor: 'pointer',
+                fontSize: '14px',
+                textAlign: 'left',
+              }}
+              onClick={handleDeleteEdgeFromContextMenu}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f0f0f0'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'white'; }}
+            >
+              Delete Connection
+            </button>
+          </div>
+        </>
+      )}
+
+      <Modal
+        visible={showDeleteEdgeModal}
+        onDismiss={() => setShowDeleteEdgeModal(false)}
+        header="Delete Connection"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" onClick={() => setShowDeleteEdgeModal(false)}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={handleDeleteEdge}>
+                Delete
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <Box variant="p">
+          Are you sure you want to delete this connection?
+        </Box>
+      </Modal>
+
       <Modal
         visible={showNodeConfig}
         onDismiss={() => setShowNodeConfig(false)}
-        header="Add Node"
+        header={editingNodeId ? "Edit Node" : "Add Node"}
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
@@ -175,7 +352,7 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
                 Cancel
               </Button>
               <Button variant="primary" onClick={handleCreateNode}>
-                Create
+                {editingNodeId ? 'Update' : 'Create'}
               </Button>
             </SpaceBetween>
           </Box>
@@ -239,10 +416,21 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
           ) : (
             <>
               <FormField label="Agent Profile">
-                <Input
-                  value={agentProfile}
-                  onChange={({ detail }) => setAgentProfile(detail.value)}
-                  placeholder="e.g., developer, reviewer"
+                <Select
+                  selectedOption={
+                    agentProfile
+                      ? { label: agentProfile, value: agentProfile }
+                      : null
+                  }
+                  onChange={({ detail }) =>
+                    setAgentProfile(detail.selectedOption?.value || '')
+                  }
+                  options={availableAgents.map((agent) => ({
+                    label: agent,
+                    value: agent,
+                  }))}
+                  placeholder="Select agent profile"
+                  expandToViewport={true}
                 />
               </FormField>
 
@@ -263,6 +451,17 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
                 />
               </FormField>
             </>
+          )}
+
+          {selectedNodeType === WorkflowNodeType.WEBHOOK && (
+            <FormField label="Options">
+              <Checkbox
+                checked={isPromptInput}
+                onChange={({ detail }) => setIsPromptInput(detail.checked)}
+              >
+                Enable Prompt Input for this node
+              </Checkbox>
+            </FormField>
           )}
         </SpaceBetween>
       </Modal>

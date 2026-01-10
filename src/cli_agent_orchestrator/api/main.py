@@ -46,6 +46,7 @@ from cli_agent_orchestrator.constants import (
     SERVER_HOST,
     SERVER_PORT,
     SERVER_VERSION,
+    SESSION_PREFIX,
     TERMINAL_LOG_DIR,
 )
 from cli_agent_orchestrator.models.kiro_agent import KiroAgentConfig
@@ -57,13 +58,14 @@ from cli_agent_orchestrator.utils.agent_profiles import (
 )
 
 from cli_agent_orchestrator.models.inbox import MessageStatus
-from cli_agent_orchestrator.models.terminal import Terminal, TerminalId
+from cli_agent_orchestrator.models.terminal import Terminal, TerminalId, TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import (
     flow_service,
     inbox_service,
     session_service,
     terminal_service,
+    workflow_execution_service,
 )
 from cli_agent_orchestrator.services.cleanup_service import cleanup_old_data
 from cli_agent_orchestrator.services.inbox_service import LogFileHandler
@@ -97,6 +99,22 @@ class WebhookExecuteResponse(BaseModel):
     status_code: int
     response_body: str
     success: bool
+
+
+class PromptOptimizeRequest(BaseModel):
+    prompt: str = Field(..., description="The prompt to optimize")
+    webhook_url: str = Field(
+        ..., description="The n8n webhook URL to use for optimization"
+    )
+
+
+class PromptOptimizeResponse(BaseModel):
+    optimized_prompt: str
+    original_prompt: str
+
+
+class PromptSubmitRequest(BaseModel):
+    prompt: str = Field(..., description="The prompt to submit to the session")
 
 
 async def flow_daemon():
@@ -390,17 +408,45 @@ async def health_check():
 
 @app.post("/sessions", response_model=Terminal, status_code=status.HTTP_201_CREATED)
 async def create_session(
-    provider: str, agent_profile: str, session_name: Optional[str] = None
+    provider: str,
+    agent_profile: str,
+    session_name: Optional[str] = None,
+    workflow_id: Optional[str] = None,
 ) -> Terminal:
-    """Create a new session with exactly one terminal."""
+    """Create a new session with exactly one terminal. If workflow_id is provided, create empty session without terminal."""
     try:
-        result = terminal_service.create_terminal(
-            provider=provider,
-            agent_profile=agent_profile,
-            session_name=session_name,
-            new_session=True,
-        )
-        return result
+        if workflow_id:
+            if session_name:
+                session_name_to_use = (
+                    session_name
+                    if session_name.startswith(SESSION_PREFIX)
+                    else f"{SESSION_PREFIX}{session_name}"
+                )
+            else:
+                session_name_to_use = generate_session_name()
+            if not tmux_client.session_exists(session_name_to_use):
+                tmux_client.create_session(
+                    session_name=session_name_to_use,
+                    window_name="workflow-init",
+                    terminal_id="workflow-placeholder",
+                )
+            session_service.assign_workflow_to_session(session_name_to_use, workflow_id)
+            return Terminal(
+                id="workflow-placeholder",
+                name="workflow-init",
+                session_name=session_name_to_use,
+                provider=ProviderType.CLAUDE_CODE,
+                agent_profile="workflow",
+                status=TerminalStatus.IDLE,
+            )
+        else:
+            result = terminal_service.create_terminal(
+                provider=provider,
+                agent_profile=agent_profile,
+                session_name=session_name,
+                new_session=True,
+            )
+            return result
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -875,6 +921,224 @@ async def execute_webhook(request: WebhookExecuteRequest) -> WebhookExecuteRespo
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Webhook execution failed: {str(e)}",
+        )
+
+
+@app.post("/prompt/optimize", response_model=PromptOptimizeResponse)
+async def optimize_prompt(request: PromptOptimizeRequest) -> PromptOptimizeResponse:
+    """Optimize a prompt using n8n webhook.
+
+    Args:
+        request: Prompt optimization request with webhook_url
+
+    Returns:
+        PromptOptimizeResponse with optimized and original prompts
+    """
+    try:
+        payload = {"prompt": request.prompt}
+
+        response = requests.post(
+            request.webhook_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+
+        if not response.ok:
+            error_detail = f"Webhook returned status {response.status_code}"
+            try:
+                error_body = response.json()
+                if "message" in error_body:
+                    error_detail = error_body["message"]
+                if "hint" in error_body:
+                    error_detail += f" - {error_body['hint']}"
+            except Exception:
+                error_detail += f" - {response.text[:200]}"
+
+            raise Exception(error_detail)
+
+        try:
+            result = response.json()
+        except ValueError as e:
+            raise Exception(
+                f"Webhook returned invalid JSON. Response: {response.text[:200]}"
+            )
+
+        if isinstance(result, list) and len(result) > 0:
+            result = result[0]
+
+        optimized_prompt = result.get("optimized_prompt")
+        if not optimized_prompt:
+            if "body" in result and "prompt" in result.get("body", {}):
+                optimized_prompt = result["body"]["prompt"]
+            else:
+                optimized_prompt = request.prompt
+
+        return PromptOptimizeResponse(
+            optimized_prompt=optimized_prompt, original_prompt=request.prompt
+        )
+    except requests.exceptions.Timeout:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Prompt optimization timed out after 30 seconds",
+        )
+    except requests.exceptions.ConnectionError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to connect to n8n webhook. Is n8n running?",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to optimize prompt: {str(e)}",
+        )
+
+
+@app.post("/sessions/{session_name}/prompt")
+async def submit_session_prompt(
+    session_name: str, request: PromptSubmitRequest
+) -> Dict:
+    """Submit a prompt to a session for execution.
+
+    Args:
+        session_name: Name of the session
+        request: Prompt submission request
+
+    Returns:
+        Success message with session info
+    """
+    try:
+        session = session_service.get_session(session_name)
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Session '{session_name}' not found",
+            )
+
+        logger.info(
+            f"Prompt submitted to session '{session_name}': {request.prompt[:100]}..."
+        )
+
+        return {
+            "success": True,
+            "session_name": session_name,
+            "message": "Prompt submitted successfully",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to submit prompt: {str(e)}",
+        )
+
+
+class WorkflowAssignRequest(BaseModel):
+    workflow_id: str = Field(..., description="Workflow ID to assign")
+    workflow_data: dict = Field(..., description="Complete workflow definition")
+
+
+@app.post("/sessions/{session_name}/workflow/assign")
+async def assign_workflow_to_session(
+    session_name: str, request: WorkflowAssignRequest
+) -> Dict:
+    try:
+        if not tmux_client.session_exists(session_name):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Session '{session_name}' not found",
+            )
+
+        state = workflow_execution_service.create_execution_state(
+            session_name, request.workflow_id
+        )
+
+        return {
+            "success": True,
+            "session_name": session_name,
+            "workflow_id": request.workflow_id,
+            "execution_state": state.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to assign workflow: {str(e)}",
+        )
+
+
+@app.get("/sessions/{session_name}/workflow/state")
+async def get_workflow_execution_state(session_name: str) -> Dict:
+    try:
+        state = workflow_execution_service.get_execution_state(session_name)
+        if not state:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No workflow assigned to session '{session_name}'",
+            )
+
+        return state.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get execution state: {str(e)}",
+        )
+
+
+@app.post("/sessions/{session_name}/workflow/start")
+async def start_workflow_execution(session_name: str, workflow_data: dict) -> Dict:
+    try:
+        state = workflow_execution_service.get_execution_state(session_name)
+        if not state:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No workflow assigned to session '{session_name}'",
+            )
+
+        state.status = workflow_execution_service.WorkflowExecutionStatus.RUNNING
+
+        nodes_to_spawn = workflow_execution_service.get_nodes_requiring_agents(
+            session_name, workflow_data
+        )
+
+        spawned_agents = []
+        for node_info in nodes_to_spawn:
+            result = terminal_service.create_terminal(
+                provider=node_info["provider"],
+                agent_profile=node_info["agent_profile"],
+                session_name=session_name,
+                new_session=False,
+            )
+
+            workflow_execution_service.update_node_state(
+                session_name,
+                node_info["node_id"],
+                workflow_execution_service.NodeExecutionStatus.RUNNING,
+                terminal_id=result.id,
+            )
+
+            spawned_agents.append(
+                {
+                    "node_id": node_info["node_id"],
+                    "terminal_id": result.id,
+                    "agent_profile": node_info["agent_profile"],
+                }
+            )
+
+        return {
+            "success": True,
+            "status": state.status.value,
+            "spawned_agents": spawned_agents,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start workflow: {str(e)}",
         )
 
 

@@ -37,6 +37,8 @@ export interface Session {
   id: string;
   name: string;
   status: SessionStatus;
+  workflow_id?: string; // Assigned workflow ID
+  execution_state?: Record<string, unknown>; // Workflow execution state
   terminals?: Terminal[]; // Sometimes included in list views or details
 }
 

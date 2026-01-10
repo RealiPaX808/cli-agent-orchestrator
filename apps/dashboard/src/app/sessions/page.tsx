@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { caoClient } from "@/lib/api-client";
 import { Session, ProviderType, getSessionStatusType, SessionStatus, Terminal } from "@/types/cao";
+import { WorkflowStorage } from "@/lib/workflow-storage";
 import Link from "next/link";
 
 import Button from "@cloudscape-design/components/button";
@@ -44,6 +45,8 @@ export default function SessionsPage() {
   const [agentProfile, setAgentProfile] = useState("developer");
   const [agents, setAgents] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
+  const [workflows, setWorkflows] = useState<Array<{id: string, name: string}>>([]);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string>("");
 
   const fetchSessions = useCallback(async () => {
     try {
@@ -58,7 +61,9 @@ export default function SessionsPage() {
         setAgentProfile(agentsData[0]);
       }
 
-      // Fetch terminals for chain visualization
+      const availableWorkflows = WorkflowStorage.getWorkflows();
+      setWorkflows(availableWorkflows.map(w => ({ id: w.id, name: w.name })));
+
       if (sessionsData.length > 0) {
         const withTerminals = await caoClient.listSessionsWithTerminals();
         setSessionsWithTerminals(withTerminals);
@@ -81,9 +86,24 @@ export default function SessionsPage() {
   const handleCreateSession = async () => {
     try {
       setCreating(true);
-      await caoClient.createSession(provider, agentProfile, newSessionName || undefined);
+      if (selectedWorkflowId) {
+        await caoClient.createSession(
+          "workflow",
+          "workflow",
+          newSessionName || undefined,
+          selectedWorkflowId
+        );
+      } else {
+        await caoClient.createSession(
+          provider, 
+          agentProfile, 
+          newSessionName || undefined,
+          undefined
+        );
+      }
       setShowCreate(false);
       setNewSessionName("");
+      setSelectedWorkflowId("");
       fetchSessions();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create session");
@@ -364,23 +384,45 @@ export default function SessionsPage() {
                 />
               </FormField>
 
-              <FormField label="Agent Profile">
+              <FormField label="Workflow">
                 <Select
-                  selectedOption={agents.find(a => a === agentProfile) ? { value: agentProfile, label: agentProfile } : null}
-                  onChange={({ detail }) => setAgentProfile(detail.selectedOption?.value || "")}
-                  options={agents.map(agent => ({ value: agent, label: agent }))}
-                  placeholder="Choose an agent"
+                  selectedOption={
+                    selectedWorkflowId 
+                      ? workflows.find(w => w.id === selectedWorkflowId) 
+                        ? { value: selectedWorkflowId, label: workflows.find(w => w.id === selectedWorkflowId)!.name }
+                        : null
+                      : null
+                  }
+                  onChange={({ detail }) => setSelectedWorkflowId(detail.selectedOption?.value || "")}
+                  options={[
+                    { value: "", label: "Manual setup (choose agent & provider)" },
+                    ...workflows.map(w => ({ value: w.id, label: w.name }))
+                  ]}
+                  placeholder="Choose a workflow"
                 />
               </FormField>
 
-              <FormField label="Provider">
-                <Select
-                  selectedOption={{ value: provider, label: provider }}
-                  onChange={({ detail }) => setProvider(detail.selectedOption?.value || ProviderType.Q_CLI)}
-                  options={Object.values(ProviderType).map(p => ({ value: p, label: p }))}
-                  placeholder="Choose a provider"
-                />
-              </FormField>
+              {!selectedWorkflowId && (
+                <>
+                  <FormField label="Agent Profile">
+                    <Select
+                      selectedOption={agents.find(a => a === agentProfile) ? { value: agentProfile, label: agentProfile } : null}
+                      onChange={({ detail }) => setAgentProfile(detail.selectedOption?.value || "")}
+                      options={agents.map(agent => ({ value: agent, label: agent }))}
+                      placeholder="Choose an agent"
+                    />
+                  </FormField>
+
+                  <FormField label="Provider">
+                    <Select
+                      selectedOption={{ value: provider, label: provider }}
+                      onChange={({ detail }) => setProvider(detail.selectedOption?.value || ProviderType.Q_CLI)}
+                      options={Object.values(ProviderType).map(p => ({ value: p, label: p }))}
+                      placeholder="Choose a provider"
+                    />
+                  </FormField>
+                </>
+              )}
             </SpaceBetween>
           </Form>
         </Modal>

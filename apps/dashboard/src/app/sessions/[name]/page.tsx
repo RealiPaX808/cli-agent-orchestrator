@@ -104,6 +104,13 @@ export default function SessionDetail({ params }: { params: Promise<{ name: stri
       actions={
         <SpaceBetween direction="horizontal" size="xs">
           <Button
+            variant="normal"
+            onClick={() => router.push(`/sessions/${name}/prompt-input`)}
+            iconName="gen-ai"
+          >
+            Prompt Input
+          </Button>
+          <Button
             variant="primary"
             onClick={() => setShowAddTerminal(true)}
             iconName="add-plus"
@@ -183,6 +190,11 @@ export default function SessionDetail({ params }: { params: Promise<{ name: stri
           >
             {session.status}
           </StatusIndicator>
+          {session.workflow_id && (
+            <Box>
+              <strong>Workflow:</strong> {session.workflow_id}
+            </Box>
+          )}
         </SpaceBetween>
       </Container>
 

@@ -4,16 +4,17 @@ import logging
 from typing import Dict, List, Optional
 
 from cli_agent_orchestrator.clients.database import (
+    assign_workflow_to_session as db_assign_workflow,
     delete_terminals_by_session,
+    get_session_workflow as db_get_session_workflow,
     list_terminals_by_session,
+    unassign_workflow_from_session as db_unassign_workflow,
 )
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.constants import SESSION_PREFIX
 from cli_agent_orchestrator.providers.manager import provider_manager
 
 logger = logging.getLogger(__name__)
-
-_session_workflows: Dict[str, str] = {}
 
 
 def list_sessions() -> List[Dict]:
@@ -61,8 +62,7 @@ def delete_session(session_name: str) -> bool:
 
         delete_terminals_by_session(session_name)
 
-        if session_name in _session_workflows:
-            del _session_workflows[session_name]
+        db_unassign_workflow(session_name)
 
         logger.info(f"Deleted session: {session_name}")
         return True
@@ -73,13 +73,11 @@ def delete_session(session_name: str) -> bool:
 
 
 def assign_workflow_to_session(session_name: str, workflow_id: str) -> None:
-    """Assign a workflow to a session."""
     if not tmux_client.session_exists(session_name):
         raise ValueError(f"Session '{session_name}' not found")
-    _session_workflows[session_name] = workflow_id
+    db_assign_workflow(session_name, workflow_id)
     logger.info(f"Assigned workflow {workflow_id} to session {session_name}")
 
 
 def get_session_workflow(session_name: str) -> Optional[str]:
-    """Get the workflow assigned to a session."""
-    return _session_workflows.get(session_name)
+    return db_get_session_workflow(session_name)

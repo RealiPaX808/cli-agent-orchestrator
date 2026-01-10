@@ -83,7 +83,30 @@ export const WorkflowAgentNode = memo(({ data, selected }: NodeProps) => {
     >
       <Handle
         type="target"
+        position={Position.Top}
+        id="in-top"
+        style={{
+          width: '10px',
+          height: '10px',
+          background: colors.borderActive,
+          border: '2px solid #fff',
+        }}
+      />
+      <Handle
+        type="target"
         position={Position.Left}
+        id="in-left"
+        style={{
+          width: '10px',
+          height: '10px',
+          background: colors.borderActive,
+          border: '2px solid #fff',
+        }}
+      />
+      <Handle
+        type="target"
+        position={Position.Bottom}
+        id="in-bottom"
         style={{
           width: '10px',
           height: '10px',
@@ -152,7 +175,30 @@ export const WorkflowAgentNode = memo(({ data, selected }: NodeProps) => {
 
       <Handle
         type="source"
+        position={Position.Top}
+        id="out-top"
+        style={{
+          width: '10px',
+          height: '10px',
+          background: colors.borderActive,
+          border: '2px solid #fff',
+        }}
+      />
+      <Handle
+        type="source"
         position={Position.Right}
+        id="out-right"
+        style={{
+          width: '10px',
+          height: '10px',
+          background: colors.borderActive,
+          border: '2px solid #fff',
+        }}
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="out-bottom"
         style={{
           width: '10px',
           height: '10px',

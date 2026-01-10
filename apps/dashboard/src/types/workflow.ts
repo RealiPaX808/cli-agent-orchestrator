@@ -11,6 +11,12 @@ export enum WorkflowNodeType {
   INPUT = 'input',
   OUTPUT = 'output',
   WEBHOOK = 'webhook',
+  XOR_SPLIT = 'xor_split',
+  XOR_JOIN = 'xor_join',
+  AND_SPLIT = 'and_split',
+  AND_JOIN = 'and_join',
+  OR_SPLIT = 'or_split',
+  OR_JOIN = 'or_join',
 }
 
 // Workflow Execution Status

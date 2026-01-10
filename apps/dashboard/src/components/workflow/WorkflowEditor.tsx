@@ -17,6 +17,9 @@ import {
 import '@xyflow/react/dist/style.css';
 import { WorkflowAgentNode } from './nodes/WorkflowAgentNode';
 import { WebhookNode } from './nodes/WebhookNode';
+import { XorGateNode } from './nodes/XorGateNode';
+import { AndGateNode } from './nodes/AndGateNode';
+import { OrGateNode } from './nodes/OrGateNode';
 import { Workflow, WorkflowNode, WorkflowEdge, WorkflowNodeType } from '@/types/workflow';
 import { ProviderType } from '@/types/cao';
 import { WorkflowStorage } from '@/lib/workflow-storage';
@@ -37,6 +40,12 @@ const nodeTypes = {
   assign: WorkflowAgentNode,
   send_message: WorkflowAgentNode,
   webhook: WebhookNode,
+  xor_split: XorGateNode,
+  xor_join: XorGateNode,
+  and_split: AndGateNode,
+  and_join: AndGateNode,
+  or_split: OrGateNode,
+  or_join: OrGateNode,
 };
 
 interface WorkflowEditorProps {
@@ -45,12 +54,7 @@ interface WorkflowEditorProps {
 
 export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
   const router = useRouter();
-  const [workflow, setWorkflow] = useState<Workflow>(() => {
-    if (workflowId) {
-      return WorkflowStorage.getWorkflow(workflowId) || createEmptyWorkflow();
-    }
-    return createEmptyWorkflow();
-  });
+  const [workflow, setWorkflow] = useState<Workflow>(createEmptyWorkflow());
 
   const [nodes, setNodes, onNodesChange] = useNodesState(workflow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(workflow.edges);
@@ -68,6 +72,24 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [availableAgents, setAvailableAgents] = useState<string[]>([]);
+
+  useEffect(() => {
+    const loadWorkflow = async () => {
+      if (workflowId) {
+        const loadedWorkflow = await WorkflowStorage.getWorkflow(workflowId);
+        if (loadedWorkflow) {
+          setWorkflow(loadedWorkflow);
+          setNodes(loadedWorkflow.nodes);
+          setEdges(loadedWorkflow.edges);
+        } else {
+          const newWorkflow = createEmptyWorkflow();
+          newWorkflow.id = workflowId;
+          setWorkflow(newWorkflow);
+        }
+      }
+    };
+    loadWorkflow();
+  }, [workflowId, setNodes, setEdges]);
 
   useEffect(() => {
     const loadAgents = async () => {
@@ -149,12 +171,21 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
   const handleCreateNode = () => {
     const config: any = {};
     
+    const isQualityGate = [
+      WorkflowNodeType.XOR_SPLIT,
+      WorkflowNodeType.XOR_JOIN,
+      WorkflowNodeType.AND_SPLIT,
+      WorkflowNodeType.AND_JOIN,
+      WorkflowNodeType.OR_SPLIT,
+      WorkflowNodeType.OR_JOIN,
+    ].includes(selectedNodeType);
+
     if (selectedNodeType === WorkflowNodeType.WEBHOOK) {
       config.webhookUrl = webhookUrl;
       config.webhookMethod = webhookMethod;
       config.webhookPayload = webhookPayload;
       config.isPromptInput = isPromptInput;
-    } else {
+    } else if (!isQualityGate) {
       config.agentProfile = agentProfile;
       config.provider = provider || undefined;
     }
@@ -201,7 +232,7 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
     setIsPromptInput(false);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const updatedWorkflow: Workflow = {
       ...workflow,
       nodes,
@@ -209,7 +240,7 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
       updatedAt: new Date().toISOString(),
     };
 
-    WorkflowStorage.saveWorkflow(updatedWorkflow);
+    await WorkflowStorage.saveWorkflow(updatedWorkflow);
     setWorkflow(updatedWorkflow);
   };
 
@@ -224,8 +255,8 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
     URL.revokeObjectURL(url);
   };
 
-  const handleExecute = () => {
-    handleSave();
+  const handleExecute = async () => {
+    await handleSave();
     router.push(`/workflows/${workflow.id}/execute`);
   };
 
@@ -241,6 +272,17 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
         onEdgeContextMenu={handleEdgeContextMenu}
         onNodeDoubleClick={handleNodeDoubleClick}
         nodeTypes={nodeTypes}
+        defaultEdgeOptions={{
+          type: 'smoothstep',
+          animated: true,
+          style: { stroke: '#4299e1', strokeWidth: 2 },
+          markerEnd: {
+            type: 'arrowclosed',
+            color: '#4299e1',
+            width: 20,
+            height: 20,
+          },
+        }}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         deleteKeyCode="Delete"
@@ -369,6 +411,12 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
                 { label: 'Assign', value: WorkflowNodeType.ASSIGN },
                 { label: 'Send Message', value: WorkflowNodeType.SEND_MESSAGE },
                 { label: 'Webhook', value: WorkflowNodeType.WEBHOOK },
+                { label: 'XOR Split (Choose ONE path)', value: WorkflowNodeType.XOR_SPLIT },
+                { label: 'XOR Join (Merge ONE path)', value: WorkflowNodeType.XOR_JOIN },
+                { label: 'AND Split (Execute ALL paths)', value: WorkflowNodeType.AND_SPLIT },
+                { label: 'AND Join (Wait for ALL paths)', value: WorkflowNodeType.AND_JOIN },
+                { label: 'OR Split (Execute ONE+ paths)', value: WorkflowNodeType.OR_SPLIT },
+                { label: 'OR Join (Wait for active paths)', value: WorkflowNodeType.OR_JOIN },
               ]}
             />
           </FormField>
@@ -413,7 +461,14 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
                 />
               </FormField>
             </>
-          ) : (
+          ) : ![
+            WorkflowNodeType.XOR_SPLIT,
+            WorkflowNodeType.XOR_JOIN,
+            WorkflowNodeType.AND_SPLIT,
+            WorkflowNodeType.AND_JOIN,
+            WorkflowNodeType.OR_SPLIT,
+            WorkflowNodeType.OR_JOIN,
+          ].includes(selectedNodeType) ? (
             <>
               <FormField label="Agent Profile">
                 <Select
@@ -451,7 +506,7 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
                 />
               </FormField>
             </>
-          )}
+          ) : null}
 
           {selectedNodeType === WorkflowNodeType.WEBHOOK && (
             <FormField label="Options">

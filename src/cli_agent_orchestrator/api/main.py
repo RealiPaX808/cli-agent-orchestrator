@@ -31,10 +31,17 @@ from pydantic import BaseModel, Field, field_validator
 from watchdog.observers.polling import PollingObserver
 
 from cli_agent_orchestrator.clients.database import (
+    assign_workflow_to_session as db_assign_workflow,
     create_inbox_message,
+    create_workflow,
+    delete_workflow,
     get_inbox_messages,
-    init_db,
+    get_session_workflow,
     get_terminal_metadata,
+    get_workflow,
+    init_db,
+    list_workflows,
+    update_workflow,
 )
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.constants import (
@@ -1139,6 +1146,234 @@ async def start_workflow_execution(session_name: str, workflow_data: dict) -> Di
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to start workflow: {str(e)}",
+        )
+
+
+@app.post("/workflows", status_code=status.HTTP_201_CREATED)
+async def create_workflow_endpoint(workflow_data: Dict) -> Dict:
+    try:
+        workflow_id = workflow_data.get("id")
+        name = workflow_data.get("name")
+        if not workflow_id or not name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Workflow 'id' and 'name' are required",
+            )
+
+        description = workflow_data.get("description")
+        config = json.dumps(workflow_data.get("config", {}))
+
+        nodes = []
+        for node in workflow_data.get("nodes", []):
+            nodes.append(
+                {
+                    "id": node["id"],
+                    "data": json.dumps(node.get("data", {})),
+                    "position_x": node.get("position", {}).get("x", 0),
+                    "position_y": node.get("position", {}).get("y", 0),
+                }
+            )
+
+        edges = []
+        for edge in workflow_data.get("edges", []):
+            edges.append(
+                {
+                    "id": edge["id"],
+                    "source": edge["source"],
+                    "target": edge["target"],
+                    "data": json.dumps(edge.get("data")) if edge.get("data") else None,
+                }
+            )
+
+        result = create_workflow(workflow_id, name, description, config, nodes, edges)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create workflow: {str(e)}",
+        )
+
+        edges = []
+        for edge in workflow_data.get("edges", []):
+            edges.append(
+                {
+                    "id": edge["id"],
+                    "source": edge["source"],
+                    "target": edge["target"],
+                    "data": json.dumps(edge.get("data")) if edge.get("data") else None,
+                }
+            )
+
+        result = create_workflow(workflow_id, name, description, config, nodes, edges)
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create workflow: {str(e)}",
+        )
+
+
+@app.get("/workflows")
+async def list_workflows_endpoint() -> List[Dict]:
+    try:
+        workflows = list_workflows()
+        for workflow in workflows:
+            workflow["config"] = json.loads(workflow["config"])
+        return workflows
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list workflows: {str(e)}",
+        )
+
+
+@app.get("/workflows/{workflow_id}")
+async def get_workflow_endpoint(workflow_id: str) -> Dict:
+    try:
+        workflow = get_workflow(workflow_id)
+        if not workflow:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow '{workflow_id}' not found",
+            )
+
+        workflow["config"] = json.loads(workflow["config"])
+
+        for node in workflow["nodes"]:
+            node["data"] = json.loads(node["data"])
+            node["position"] = {
+                "x": node.pop("position_x"),
+                "y": node.pop("position_y"),
+            }
+
+        for edge in workflow["edges"]:
+            if edge["data"]:
+                edge["data"] = json.loads(edge["data"])
+
+        return workflow
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get workflow: {str(e)}",
+        )
+
+
+@app.put("/workflows/{workflow_id}")
+async def update_workflow_endpoint(workflow_id: str, workflow_data: Dict) -> Dict:
+    try:
+        name = workflow_data.get("name")
+        description = workflow_data.get("description")
+        config = (
+            json.dumps(workflow_data.get("config"))
+            if workflow_data.get("config")
+            else None
+        )
+
+        nodes = None
+        if "nodes" in workflow_data:
+            nodes = []
+            for node in workflow_data["nodes"]:
+                nodes.append(
+                    {
+                        "id": node["id"],
+                        "data": json.dumps(node.get("data", {})),
+                        "position_x": node.get("position", {}).get("x", 0),
+                        "position_y": node.get("position", {}).get("y", 0),
+                    }
+                )
+
+        edges = None
+        if "edges" in workflow_data:
+            edges = []
+            for edge in workflow_data["edges"]:
+                edges.append(
+                    {
+                        "id": edge["id"],
+                        "source": edge["source"],
+                        "target": edge["target"],
+                        "data": json.dumps(edge.get("data"))
+                        if edge.get("data")
+                        else None,
+                    }
+                )
+
+        success = update_workflow(workflow_id, name, description, config, nodes, edges)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow '{workflow_id}' not found",
+            )
+
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update workflow: {str(e)}",
+        )
+
+
+@app.delete("/workflows/{workflow_id}")
+async def delete_workflow_endpoint(workflow_id: str) -> Dict:
+    try:
+        success = delete_workflow(workflow_id)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow '{workflow_id}' not found",
+            )
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete workflow: {str(e)}",
+        )
+
+
+@app.get("/sessions/{session_name}/workflow")
+async def get_session_workflow_endpoint(session_name: str) -> Dict:
+    try:
+        workflow_id = get_session_workflow(session_name)
+        if not workflow_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No workflow assigned to session '{session_name}'",
+            )
+
+        workflow = get_workflow(workflow_id)
+        if not workflow:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Assigned workflow '{workflow_id}' not found",
+            )
+
+        workflow["config"] = json.loads(workflow["config"])
+
+        for node in workflow["nodes"]:
+            node["data"] = json.loads(node["data"])
+            node["position"] = {
+                "x": node.pop("position_x"),
+                "y": node.pop("position_y"),
+            }
+
+        for edge in workflow["edges"]:
+            if edge["data"]:
+                edge["data"] = json.loads(edge["data"])
+
+        return workflow
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get session workflow: {str(e)}",
         )
 
 

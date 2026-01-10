@@ -47,6 +47,8 @@ export default function SessionsPage() {
   const [creating, setCreating] = useState(false);
   const [workflows, setWorkflows] = useState<Array<{id: string, name: string}>>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string>("");
+  const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchSessions = useCallback(async () => {
     try {
@@ -61,7 +63,7 @@ export default function SessionsPage() {
         setAgentProfile(agentsData[0]);
       }
 
-      const availableWorkflows = WorkflowStorage.getWorkflows();
+      const availableWorkflows = await WorkflowStorage.getWorkflows();
       setWorkflows(availableWorkflows.map(w => ({ id: w.id, name: w.name })));
 
       if (sessionsData.length > 0) {
@@ -109,6 +111,19 @@ export default function SessionsPage() {
       setError(err instanceof Error ? err.message : "Failed to create session");
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleDeleteSession = async (sessionName: string) => {
+    try {
+      setDeleting(true);
+      await caoClient.deleteSession(sessionName);
+      setSessionToDelete(null);
+      fetchSessions();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete session");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -282,9 +297,16 @@ export default function SessionsPage() {
                       Workflow
                     </Button>
                   </Link>
+                  <Button 
+                    variant="normal" 
+                    iconName="remove"
+                    onClick={() => setSessionToDelete(item.name)}
+                  >
+                    Delete
+                  </Button>
                 </SpaceBetween>
               ),
-              width: 180,
+              width: 250,
             },
           ]}
           items={paginatedSessions}
@@ -425,6 +447,34 @@ export default function SessionsPage() {
               )}
             </SpaceBetween>
           </Form>
+        </Modal>
+      )}
+
+      {sessionToDelete && (
+        <Modal
+          visible={!!sessionToDelete}
+          onDismiss={() => setSessionToDelete(null)}
+          header="Confirm session deletion"
+          footer={
+            <Box float="right">
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button variant="link" onClick={() => setSessionToDelete(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => handleDeleteSession(sessionToDelete)}
+                  loading={deleting}
+                >
+                  Delete
+                </Button>
+              </SpaceBetween>
+            </Box>
+          }
+        >
+          <Box variant="p" color="text-body-secondary">
+            Are you sure you want to delete session "{sessionToDelete}"? This action cannot be undone.
+          </Box>
         </Modal>
       )}
     </>

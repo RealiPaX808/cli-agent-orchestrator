@@ -1,92 +1,75 @@
 import { Workflow, WorkflowPattern } from '@/types/workflow';
+import { caoClient } from './api-client';
 
-const WORKFLOWS_KEY = 'cao_workflows';
 const PATTERNS_KEY = 'cao_workflow_patterns';
 
-/**
- * Workflow Storage Service
- * Handles persistence of workflows and patterns to localStorage
- */
-
 export class WorkflowStorage {
-  /**
-   * Get all workflows
-   */
-  static getWorkflows(): Workflow[] {
-    if (typeof window === 'undefined') return [];
-    
+  static async getWorkflows(): Promise<Workflow[]> {
     try {
-      const data = localStorage.getItem(WORKFLOWS_KEY);
-      return data ? JSON.parse(data) : [];
+      return await caoClient.listWorkflows();
     } catch (error) {
       console.error('Failed to load workflows:', error);
       return [];
     }
   }
 
-  /**
-   * Get workflow by ID
-   */
-  static getWorkflow(id: string): Workflow | null {
-    const workflows = this.getWorkflows();
-    return workflows.find(w => w.id === id) || null;
-  }
-
-  /**
-   * Save workflow
-   */
-  static saveWorkflow(workflow: Workflow): void {
-    const workflows = this.getWorkflows();
-    const existingIndex = workflows.findIndex(w => w.id === workflow.id);
-    
-    const updatedWorkflow = {
-      ...workflow,
-      updatedAt: new Date().toISOString(),
-    };
-
-    if (existingIndex >= 0) {
-      workflows[existingIndex] = updatedWorkflow;
-    } else {
-      workflows.push(updatedWorkflow);
+  static async getWorkflow(id: string): Promise<Workflow | null> {
+    try {
+      return await caoClient.getWorkflow(id);
+    } catch (error) {
+      console.error('Failed to load workflow:', error);
+      return null;
     }
-
-    localStorage.setItem(WORKFLOWS_KEY, JSON.stringify(workflows));
   }
 
-  /**
-   * Delete workflow
-   */
-  static deleteWorkflow(id: string): void {
-    const workflows = this.getWorkflows();
-    const filtered = workflows.filter(w => w.id !== id);
-    localStorage.setItem(WORKFLOWS_KEY, JSON.stringify(filtered));
+  static async saveWorkflow(workflow: Workflow): Promise<void> {
+    try {
+      const workflows = await this.getWorkflows();
+      const existing = workflows.find(w => w.id === workflow.id);
+      
+      const updatedWorkflow = {
+        ...workflow,
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (existing) {
+        await caoClient.updateWorkflow(workflow.id, updatedWorkflow);
+      } else {
+        await caoClient.createWorkflow(updatedWorkflow);
+      }
+    } catch (error) {
+      console.error('Failed to save workflow:', error);
+      throw error;
+    }
   }
 
-  /**
-   * Export workflow to JSON
-   */
+  static async deleteWorkflow(id: string): Promise<void> {
+    try {
+      await caoClient.deleteWorkflow(id);
+    } catch (error) {
+      console.error('Failed to delete workflow:', error);
+      throw error;
+    }
+  }
+
   static exportWorkflow(workflow: Workflow): string {
     return JSON.stringify(workflow, null, 2);
   }
 
-  /**
-   * Import workflow from JSON
-   */
-  static importWorkflow(json: string): Workflow {
+  static async importWorkflow(json: string): Promise<Workflow> {
     const workflow = JSON.parse(json) as Workflow;
     
-    // Assign new ID and timestamps on import
-    return {
+    const importedWorkflow = {
       ...workflow,
       id: `workflow-${Date.now()}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    
+    await this.saveWorkflow(importedWorkflow);
+    return importedWorkflow;
   }
 
-  /**
-   * Get all workflow patterns
-   */
   static getPatterns(): WorkflowPattern[] {
     if (typeof window === 'undefined') return [];
     
@@ -99,9 +82,6 @@ export class WorkflowStorage {
     }
   }
 
-  /**
-   * Save workflow pattern
-   */
   static savePattern(pattern: WorkflowPattern): void {
     const patterns = this.getPatterns();
     const existingIndex = patterns.findIndex(p => p.id === pattern.id);
@@ -115,18 +95,12 @@ export class WorkflowStorage {
     localStorage.setItem(PATTERNS_KEY, JSON.stringify(patterns));
   }
 
-  /**
-   * Delete workflow pattern
-   */
   static deletePattern(id: string): void {
     const patterns = this.getPatterns();
     const filtered = patterns.filter(p => p.id !== id);
     localStorage.setItem(PATTERNS_KEY, JSON.stringify(filtered));
   }
 
-  /**
-   * Create workflow from pattern
-   */
   static createFromPattern(patternId: string): Workflow | null {
     const pattern = this.getPatterns().find(p => p.id === patternId);
     if (!pattern) return null;
@@ -139,9 +113,6 @@ export class WorkflowStorage {
     };
   }
 
-  /**
-   * Default workflow patterns
-   */
   private static getDefaultPatterns(): WorkflowPattern[] {
     return [
       {

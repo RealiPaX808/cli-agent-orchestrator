@@ -19,21 +19,24 @@ export default function WorkflowsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const loaded = WorkflowStorage.getWorkflows();
-    setWorkflows(loaded);
-    setLoading(false);
+    const loadWorkflows = async () => {
+      const loaded = await WorkflowStorage.getWorkflows();
+      setWorkflows(loaded);
+      setLoading(false);
+    };
+    loadWorkflows();
   }, []);
 
-  const loadWorkflows = () => {
-    const loaded = WorkflowStorage.getWorkflows();
+  const loadWorkflows = async () => {
+    const loaded = await WorkflowStorage.getWorkflows();
     setWorkflows(loaded);
   };
 
-  const handleDelete = () => {
-    selectedWorkflows.forEach(w => {
-      WorkflowStorage.deleteWorkflow(w.id);
-    });
-    loadWorkflows();
+  const handleDelete = async () => {
+    await Promise.all(
+      selectedWorkflows.map(w => WorkflowStorage.deleteWorkflow(w.id))
+    );
+    await loadWorkflows();
     setSelectedWorkflows([]);
   };
 
@@ -108,7 +111,7 @@ export default function WorkflowsPage() {
               {
                 id: "nodes",
                 header: "Nodes",
-                cell: (item) => item.nodes.length,
+                cell: (item) => (item as any).node_count ?? item.nodes?.length ?? "-",
               },
               {
                 id: "updated",

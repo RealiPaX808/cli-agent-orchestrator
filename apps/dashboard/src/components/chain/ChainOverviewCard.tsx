@@ -16,8 +16,8 @@ import { Node as ReactFlowNode } from '@xyflow/react';
 import { Session, TerminalStatus } from '@/types/cao';
 import Button from '@cloudscape-design/components/button';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { WorkflowStorage } from '@/lib/workflow-storage';
 import { Workflow } from '@/types/workflow';
+import { caoClient } from '@/lib/api-client';
 
 interface ChainOverviewCardProps {
   sessions: Session[];
@@ -105,16 +105,23 @@ export const ChainOverviewCard = ({ sessions, className }: ChainOverviewCardProp
 
   const selectedSession = sessions[selectedSessionIndex];
 
-  // Load workflow for selected session
   useEffect(() => {
     if (!selectedSession) {
       setWorkflow(null);
       return;
     }
 
-    const workflowId = `session-${selectedSession.name}`;
-    const loadedWorkflow = WorkflowStorage.getWorkflow(workflowId);
-    setWorkflow(loadedWorkflow);
+    const loadWorkflow = async () => {
+      try {
+        const sessionWorkflow = await caoClient.getSessionWorkflow(selectedSession.name);
+        setWorkflow(sessionWorkflow);
+      } catch (error) {
+        console.error('Failed to load session workflow:', error);
+        setWorkflow(null);
+      }
+    };
+
+    loadWorkflow();
   }, [selectedSession]);
 
   // Create nodes and edges from workflow OR fallback to terminal layout
@@ -256,7 +263,7 @@ export const ChainOverviewCard = ({ sessions, className }: ChainOverviewCardProp
               <Button
                 iconName="edit"
                 variant="inline-link"
-                onClick={() => router.push(`/workflows/session-${selectedSession.name}`)}
+                onClick={() => router.push(`/workflows/${workflow.id}`)}
               >
                 Edit Workflow
               </Button>

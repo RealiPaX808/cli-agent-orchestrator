@@ -1,4 +1,5 @@
 import { Session, Terminal, TerminalOutputResponse, InboxMessage } from "../types/cao";
+import { Workflow } from "../types/workflow";
 
 const BASE_URL = "/api";
 
@@ -57,6 +58,40 @@ class CAOClient {
     return this.fetch<{ success: boolean }>(`/sessions/${name}`, {
       method: "DELETE",
     });
+  }
+
+  async listWorkflows(): Promise<Workflow[]> {
+    return this.fetch<Workflow[]>("/workflows");
+  }
+
+  async getWorkflow(id: string): Promise<Workflow> {
+    return this.fetch<Workflow>(`/workflows/${id}`);
+  }
+
+  async createWorkflow(workflow: Workflow): Promise<Workflow> {
+    return this.fetch<Workflow>("/workflows", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(workflow),
+    });
+  }
+
+  async updateWorkflow(id: string, workflow: Partial<Workflow>): Promise<{ success: boolean }> {
+    return this.fetch<{ success: boolean }>(`/workflows/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(workflow),
+    });
+  }
+
+  async deleteWorkflow(id: string): Promise<{ success: boolean }> {
+    return this.fetch<{ success: boolean }>(`/workflows/${id}`, {
+      method: "DELETE",
+    });
+  }
+
+  async getSessionWorkflow(sessionName: string): Promise<Workflow> {
+    return this.fetch<Workflow>(`/sessions/${sessionName}/workflow`);
   }
 
   // Terminals

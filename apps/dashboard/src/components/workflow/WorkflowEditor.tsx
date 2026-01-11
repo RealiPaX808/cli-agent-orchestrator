@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef, DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ReactFlow,
@@ -13,13 +13,12 @@ import {
   Connection,
   Panel,
   Edge,
+  ReactFlowInstance,
+  XYPosition,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { WorkflowAgentNode } from './nodes/WorkflowAgentNode';
-import { WebhookNode } from './nodes/WebhookNode';
-import { XorGateNode } from './nodes/XorGateNode';
-import { AndGateNode } from './nodes/AndGateNode';
-import { OrGateNode } from './nodes/OrGateNode';
+
+import { BpmnToolbar } from './BpmnToolbar';
 import { Workflow, WorkflowNode, WorkflowEdge, WorkflowNodeType } from '@/types/workflow';
 import { ProviderType } from '@/types/cao';
 import { WorkflowStorage } from '@/lib/workflow-storage';
@@ -34,6 +33,17 @@ import Box from '@cloudscape-design/components/box';
 import Textarea from '@cloudscape-design/components/textarea';
 import Checkbox from '@cloudscape-design/components/checkbox';
 
+import { WorkflowAgentNode } from './nodes/WorkflowAgentNode';
+import { WebhookNode } from './nodes/WebhookNode';
+import { XorGateNode } from './nodes/XorGateNode';
+import { AndGateNode } from './nodes/AndGateNode';
+import { OrGateNode } from './nodes/OrGateNode';
+import StartEventNode from './nodes/StartEventNode';
+import EndEventNode from './nodes/EndEventNode';
+import ServiceTaskNode from './nodes/ServiceTaskNode';
+import ExclusiveGatewayNode from './nodes/ExclusiveGatewayNode';
+import ParallelGatewayNode from './nodes/ParallelGatewayNode';
+
 const nodeTypes = {
   agent_spawn: WorkflowAgentNode,
   handoff: WorkflowAgentNode,
@@ -46,6 +56,11 @@ const nodeTypes = {
   and_join: AndGateNode,
   or_split: OrGateNode,
   or_join: OrGateNode,
+  startEvent: StartEventNode,
+  endEvent: EndEventNode,
+  serviceTask: ServiceTaskNode,
+  exclusiveGateway: ExclusiveGatewayNode,
+  parallelGateway: ParallelGatewayNode,
 };
 
 interface WorkflowEditorProps {
@@ -55,6 +70,9 @@ interface WorkflowEditorProps {
 export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
   const router = useRouter();
   const [workflow, setWorkflow] = useState<Workflow>(createEmptyWorkflow());
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
+  const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(workflow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(workflow.edges);
@@ -72,6 +90,10 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [availableAgents, setAvailableAgents] = useState<string[]>([]);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [taskTemplate, setTaskTemplate] = useState('');
+  const [waitForCompletion, setWaitForCompletion] = useState(true);
+  const [direction, setDirection] = useState<'Diverging' | 'Converging'>('Diverging');
 
   useEffect(() => {
     const loadWorkflow = async () => {
@@ -90,6 +112,11 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
     };
     loadWorkflow();
   }, [workflowId, setNodes, setEdges]);
+
+  const handleReactFlowInit = useCallback((instance: ReactFlowInstance) => {
+    console.log('✅ ReactFlow initialized');
+    setReactFlowInstance(instance);
+  }, []);
 
   useEffect(() => {
     const loadAgents = async () => {
@@ -137,32 +164,34 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
     }
   }, [contextMenu, setEdges]);
 
-  const handleAddNode = () => {
-    setEditingNodeId(null);
-    setNodeName('');
-    setAgentProfile('');
-    setProvider('');
-    setWebhookUrl('');
-    setWebhookMethod('POST');
-    setWebhookPayload('');
-    setIsPromptInput(false);
-    setSelectedNodeType(WorkflowNodeType.AGENT_SPAWN);
-    setShowNodeConfig(true);
-  };
+
 
   const handleNodeDoubleClick = useCallback((_event: React.MouseEvent, node: WorkflowNode) => {
+    console.log('🖱️ Node double-clicked:', { id: node.id, type: node.data.type, label: node.data.label });
     setEditingNodeId(node.id);
     setSelectedNodeType(node.data.type);
     setNodeName(node.data.label);
     
-    if (node.data.type === WorkflowNodeType.WEBHOOK) {
-      setWebhookUrl(node.data.config.webhookUrl || '');
-      setWebhookMethod(node.data.config.webhookMethod || 'POST');
-      setWebhookPayload(node.data.config.webhookPayload || '');
-      setIsPromptInput(node.data.config.isPromptInput || false);
+    const config = node.data.config as Record<string, any>;
+    
+    if (node.data.type === WorkflowNodeType.START_EVENT) {
+      setIsPromptInput(config.webhookEnabled || false);
+      setWebhookUrl(config.webhookUrl || '');
+    } else if (node.data.type === WorkflowNodeType.WEBHOOK) {
+      setWebhookUrl(config.webhookUrl || '');
+      setWebhookMethod(config.webhookMethod || 'POST');
+      setWebhookPayload(config.webhookPayload || '');
+      setIsPromptInput(config.isPromptInput || false);
+    } else if (node.data.type === WorkflowNodeType.SERVICE_TASK) {
+      setAgentProfile(config.agentProfile || '');
+      setProvider((config.provider as ProviderType) || '');
+      setTaskTemplate(config.taskTemplate || '');
+      setWaitForCompletion(config.waitForCompletion !== false);
+    } else if ([WorkflowNodeType.EXCLUSIVE_GATEWAY, WorkflowNodeType.PARALLEL_GATEWAY, WorkflowNodeType.INCLUSIVE_GATEWAY].includes(node.data.type)) {
+      setDirection(config.direction || 'Diverging');
     } else {
-      setAgentProfile(node.data.config.agentProfile || '');
-      setProvider((node.data.config.provider as ProviderType) || '');
+      setAgentProfile(config.agentProfile || '');
+      setProvider((config.provider as ProviderType) || '');
     }
     
     setShowNodeConfig(true);
@@ -171,7 +200,11 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
   const handleCreateNode = () => {
     const config: any = {};
     
-    const isQualityGate = [
+    const isGateway = [
+      WorkflowNodeType.EXCLUSIVE_GATEWAY,
+      WorkflowNodeType.PARALLEL_GATEWAY,
+      WorkflowNodeType.INCLUSIVE_GATEWAY,
+      // Legacy types
       WorkflowNodeType.XOR_SPLIT,
       WorkflowNodeType.XOR_JOIN,
       WorkflowNodeType.AND_SPLIT,
@@ -180,12 +213,30 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
       WorkflowNodeType.OR_JOIN,
     ].includes(selectedNodeType);
 
-    if (selectedNodeType === WorkflowNodeType.WEBHOOK) {
+    const isEvent = [
+      WorkflowNodeType.START_EVENT,
+      WorkflowNodeType.END_EVENT,
+    ].includes(selectedNodeType);
+
+    if (selectedNodeType === WorkflowNodeType.START_EVENT) {
+      config.webhookEnabled = isPromptInput;
+      if (isPromptInput) {
+        config.webhookUrl = webhookUrl;
+      }
+    } else if (selectedNodeType === WorkflowNodeType.SERVICE_TASK) {
+      config.agentProfile = agentProfile;
+      config.provider = provider || undefined;
+      config.taskTemplate = taskTemplate;
+      config.waitForCompletion = waitForCompletion;
+    } else if (selectedNodeType === WorkflowNodeType.WEBHOOK) {
       config.webhookUrl = webhookUrl;
       config.webhookMethod = webhookMethod;
       config.webhookPayload = webhookPayload;
       config.isPromptInput = isPromptInput;
-    } else if (!isQualityGate) {
+    } else if (isGateway) {
+      config.direction = direction;
+    } else if (!isEvent) {
+      // Legacy node types or other task types
       config.agentProfile = agentProfile;
       config.provider = provider || undefined;
     }
@@ -230,6 +281,9 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
     setWebhookMethod('POST');
     setWebhookPayload('');
     setIsPromptInput(false);
+    setTaskTemplate('');
+    setWaitForCompletion(true);
+    setDirection('Diverging');
   };
 
   const handleSave = async () => {
@@ -260,25 +314,115 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
     router.push(`/workflows/${workflow.id}/execute`);
   };
 
+  const onDragOver = useCallback((event: DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    console.log('🔄 Drag over canvas');
+    setIsDragging(true);
+  }, []);
+
+  const onDrop = useCallback(
+    (event: DragEvent) => {
+      event.preventDefault();
+      setIsDragging(false);
+
+      console.log('📍 Drop event:', {
+        hasWrapper: !!reactFlowWrapper.current,
+        hasInstance: !!reactFlowInstance,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
+
+      if (!reactFlowWrapper.current || !reactFlowInstance) {
+        console.error('❌ Drop failed: ReactFlow not ready', {
+          wrapper: !!reactFlowWrapper.current,
+          instance: !!reactFlowInstance,
+        });
+        return;
+      }
+
+      const reactFlowBounds = reactFlowWrapper.current.getBoundingClientRect();
+      const type = event.dataTransfer.getData('application/reactflow') as WorkflowNodeType;
+      const label = event.dataTransfer.getData('nodeLabel');
+
+      console.log('📦 Extracted data:', { type, label });
+
+      if (!type) {
+        console.error('❌ Drop failed: No node type in dataTransfer');
+        return;
+      }
+
+      const position: XYPosition = reactFlowInstance.screenToFlowPosition({
+        x: event.clientX - reactFlowBounds.left,
+        y: event.clientY - reactFlowBounds.top,
+      });
+
+      console.log('✅ Creating node at position:', position);
+
+      const newNode: WorkflowNode = {
+        id: `node-${Date.now()}`,
+        type,
+        position,
+        data: {
+          id: `node-${Date.now()}`,
+          type,
+          label: label || 'New Node',
+          config: {},
+        },
+      };
+
+      setNodes((nds) => nds.concat(newNode));
+      console.log('✅ Node created successfully');
+    },
+    [reactFlowInstance, setNodes]
+  );
+
   return (
-    <div style={{ width: '100%', height: '600px', position: 'relative' }}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onEdgeDoubleClick={handleEdgeDoubleClick}
-        onEdgeContextMenu={handleEdgeContextMenu}
-        onNodeDoubleClick={handleNodeDoubleClick}
-        nodeTypes={nodeTypes}
+    <div style={{ 
+      display: 'flex', 
+      width: '100%', 
+      height: isFullscreen ? '100vh' : '600px',
+      position: isFullscreen ? 'fixed' : 'relative',
+      top: isFullscreen ? 0 : 'auto',
+      left: isFullscreen ? 0 : 'auto',
+      zIndex: isFullscreen ? 50 : 'auto',
+      background: '#ffffff',
+    }}>      
+      <div 
+        ref={reactFlowWrapper}
+        style={{ 
+          flex: 1, 
+          position: 'relative',
+          outline: isDragging ? '2px dashed #10b981' : 'none',
+          outlineOffset: '-4px',
+          backgroundColor: isDragging ? 'rgba(16, 185, 129, 0.05)' : 'transparent',
+          transition: 'all 0.2s ease',
+        }}
+      >
+        <BpmnToolbar />
+        <ReactFlow
+          nodes={nodes as any}
+          edges={edges as any}
+          onNodesChange={onNodesChange as any}
+          onEdgesChange={onEdgesChange as any}
+          onConnect={onConnect}
+          onEdgeDoubleClick={handleEdgeDoubleClick}
+          onEdgeContextMenu={handleEdgeContextMenu}
+          onNodeDoubleClick={handleNodeDoubleClick as any}
+          onInit={handleReactFlowInit}
+          onDrop={onDrop}
+          onDragOver={onDragOver}
+          nodeTypes={nodeTypes}
         defaultEdgeOptions={{
           type: 'smoothstep',
           animated: true,
-          style: { stroke: '#4299e1', strokeWidth: 2 },
+          style: { 
+            stroke: '#6b7280', 
+            strokeWidth: 2.5,
+          },
           markerEnd: {
             type: 'arrowclosed',
-            color: '#4299e1',
+            color: '#6b7280',
             width: 20,
             height: 20,
           },
@@ -287,13 +431,16 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
         fitViewOptions={{ padding: 0.2 }}
         deleteKeyCode="Delete"
       >
-        <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#2d3f4f" />
+        <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#d1d5db" />
         <Controls />
         
         <Panel position="top-right">
           <SpaceBetween direction="horizontal" size="xs">
-            <Button onClick={handleAddNode} iconName="add-plus">
-              Add Node
+            <Button 
+              onClick={() => setIsFullscreen(!isFullscreen)} 
+              iconName={isFullscreen ? "resize-area" : "expand"}
+            >
+              {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
             </Button>
             <Button onClick={handleSave} iconName="upload">
               Save
@@ -307,6 +454,7 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
           </SpaceBetween>
         </Panel>
       </ReactFlow>
+      </div>
 
       {contextMenu && (
         <>
@@ -406,17 +554,14 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
               selectedOption={{ label: selectedNodeType, value: selectedNodeType }}
               onChange={({ detail }) => setSelectedNodeType(detail.selectedOption.value as WorkflowNodeType)}
               options={[
-                { label: 'Agent Spawn', value: WorkflowNodeType.AGENT_SPAWN },
-                { label: 'Handoff', value: WorkflowNodeType.HANDOFF },
-                { label: 'Assign', value: WorkflowNodeType.ASSIGN },
-                { label: 'Send Message', value: WorkflowNodeType.SEND_MESSAGE },
-                { label: 'Webhook', value: WorkflowNodeType.WEBHOOK },
-                { label: 'XOR Split (Choose ONE path)', value: WorkflowNodeType.XOR_SPLIT },
-                { label: 'XOR Join (Merge ONE path)', value: WorkflowNodeType.XOR_JOIN },
-                { label: 'AND Split (Execute ALL paths)', value: WorkflowNodeType.AND_SPLIT },
-                { label: 'AND Join (Wait for ALL paths)', value: WorkflowNodeType.AND_JOIN },
-                { label: 'OR Split (Execute ONE+ paths)', value: WorkflowNodeType.OR_SPLIT },
-                { label: 'OR Join (Wait for active paths)', value: WorkflowNodeType.OR_JOIN },
+                { label: 'Start Event', value: WorkflowNodeType.START_EVENT },
+                { label: 'End Event', value: WorkflowNodeType.END_EVENT },
+                { label: 'Service Task (Agent)', value: WorkflowNodeType.SERVICE_TASK },
+                { label: 'Script Task', value: WorkflowNodeType.SCRIPT_TASK },
+                { label: 'User Task', value: WorkflowNodeType.USER_TASK },
+                { label: 'Exclusive Gateway (XOR)', value: WorkflowNodeType.EXCLUSIVE_GATEWAY },
+                { label: 'Parallel Gateway (AND)', value: WorkflowNodeType.PARALLEL_GATEWAY },
+                { label: 'Inclusive Gateway (OR)', value: WorkflowNodeType.INCLUSIVE_GATEWAY },
               ]}
             />
           </FormField>
@@ -429,46 +574,41 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
             />
           </FormField>
 
-          {selectedNodeType === WorkflowNodeType.WEBHOOK ? (
+          {selectedNodeType === WorkflowNodeType.START_EVENT || selectedNodeType === WorkflowNodeType.END_EVENT ? (
             <>
-              <FormField label="Webhook URL">
-                <Input
-                  value={webhookUrl}
-                  onChange={({ detail }) => setWebhookUrl(detail.value)}
-                  placeholder="https://example.com/webhook"
-                />
-              </FormField>
-
-              <FormField label="HTTP Method">
-                <Select
-                  selectedOption={{ label: webhookMethod, value: webhookMethod }}
-                  onChange={({ detail }) => setWebhookMethod(detail.selectedOption.value as 'GET' | 'POST' | 'PUT' | 'DELETE')}
-                  options={[
-                    { label: 'GET', value: 'GET' },
-                    { label: 'POST', value: 'POST' },
-                    { label: 'PUT', value: 'PUT' },
-                    { label: 'DELETE', value: 'DELETE' },
-                  ]}
-                />
-              </FormField>
-
-              <FormField label="Payload" description="Text to send as request body">
-                <Textarea
-                  value={webhookPayload}
-                  onChange={({ detail }) => setWebhookPayload(detail.value)}
-                  placeholder="Enter payload text..."
-                  rows={4}
-                />
-              </FormField>
+              <Box variant="p" color="text-body-secondary">
+                {selectedNodeType === WorkflowNodeType.START_EVENT 
+                  ? 'Configure how this workflow can be triggered'
+                  : 'No configuration needed for this node type.'}
+              </Box>
+              
+              {selectedNodeType === WorkflowNodeType.START_EVENT && (
+                <>
+                  <FormField label="Webhook Trigger">
+                    <Checkbox
+                      checked={isPromptInput}
+                      onChange={({ detail }) => setIsPromptInput(detail.checked)}
+                    >
+                      Enable webhook trigger
+                    </Checkbox>
+                  </FormField>
+                  
+                  {isPromptInput && (
+                    <FormField 
+                      label="Webhook URL" 
+                      description="This workflow will be triggered when a POST request is made to this URL"
+                    >
+                      <Input
+                        value={webhookUrl}
+                        onChange={({ detail }) => setWebhookUrl(detail.value)}
+                        placeholder="/webhooks/my-workflow-trigger"
+                      />
+                    </FormField>
+                  )}
+                </>
+              )}
             </>
-          ) : ![
-            WorkflowNodeType.XOR_SPLIT,
-            WorkflowNodeType.XOR_JOIN,
-            WorkflowNodeType.AND_SPLIT,
-            WorkflowNodeType.AND_JOIN,
-            WorkflowNodeType.OR_SPLIT,
-            WorkflowNodeType.OR_JOIN,
-          ].includes(selectedNodeType) ? (
+          ) : selectedNodeType === WorkflowNodeType.SERVICE_TASK ? (
             <>
               <FormField label="Agent Profile">
                 <Select
@@ -503,6 +643,70 @@ export function WorkflowEditor({ workflowId }: WorkflowEditorProps) {
                     { label: 'GitHub Copilot', value: 'gh_copilot' },
                   ]}
                   placeholder="Select provider"
+                />
+              </FormField>
+
+              <FormField 
+                label="Task Template" 
+                description="Use {{previousOutput}} for dynamic content from previous nodes"
+              >
+                <Textarea
+                  value={taskTemplate}
+                  onChange={({ detail }) => setTaskTemplate(detail.value)}
+                  placeholder="Enter task template (supports Jinja2 syntax)..."
+                  rows={4}
+                />
+              </FormField>
+
+              <FormField label="Options">
+                <Checkbox
+                  checked={waitForCompletion}
+                  onChange={({ detail }) => setWaitForCompletion(detail.checked)}
+                >
+                  Wait for agent to complete task
+                </Checkbox>
+              </FormField>
+            </>
+          ) : [WorkflowNodeType.EXCLUSIVE_GATEWAY, WorkflowNodeType.PARALLEL_GATEWAY, WorkflowNodeType.INCLUSIVE_GATEWAY].includes(selectedNodeType) ? (
+            <FormField label="Gateway Direction">
+              <Select
+                selectedOption={{ label: direction, value: direction }}
+                onChange={({ detail }) => setDirection(detail.selectedOption.value as 'Diverging' | 'Converging')}
+                options={[
+                  { label: 'Diverging', value: 'Diverging' },
+                  { label: 'Converging', value: 'Converging' },
+                ]}
+              />
+            </FormField>
+          ) : selectedNodeType === WorkflowNodeType.WEBHOOK ? (
+            <>
+              <FormField label="Webhook URL">
+                <Input
+                  value={webhookUrl}
+                  onChange={({ detail }) => setWebhookUrl(detail.value)}
+                  placeholder="https://example.com/webhook"
+                />
+              </FormField>
+
+              <FormField label="HTTP Method">
+                <Select
+                  selectedOption={{ label: webhookMethod, value: webhookMethod }}
+                  onChange={({ detail }) => setWebhookMethod(detail.selectedOption.value as 'GET' | 'POST' | 'PUT' | 'DELETE')}
+                  options={[
+                    { label: 'GET', value: 'GET' },
+                    { label: 'POST', value: 'POST' },
+                    { label: 'PUT', value: 'PUT' },
+                    { label: 'DELETE', value: 'DELETE' },
+                  ]}
+                />
+              </FormField>
+
+              <FormField label="Payload" description="Text to send as request body">
+                <Textarea
+                  value={webhookPayload}
+                  onChange={({ detail }) => setWebhookPayload(detail.value)}
+                  placeholder="Enter payload text..."
+                  rows={4}
                 />
               </FormField>
             </>

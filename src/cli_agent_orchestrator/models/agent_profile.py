@@ -20,7 +20,8 @@ class AgentProfile(BaseModel):
 
     name: str
     description: str
-    system_prompt: Optional[str] = None  # The markdown content
+    system_prompt: Optional[str] = None
+    initial_prompt: Optional[str] = None
 
     # Q CLI agent fields (all optional, will be passed through to JSON)
     prompt: Optional[str] = None

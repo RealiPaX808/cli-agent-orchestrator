@@ -4,6 +4,7 @@ import re
 import shlex
 from typing import List, Optional
 
+from cli_agent_orchestrator.clients.database import get_terminal_state
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
@@ -20,13 +21,12 @@ class ProviderError(Exception):
 
 # Regex patterns for Claude Code output analysis
 ANSI_CODE_PATTERN = r"\x1b\[[0-9;]*m"
-RESPONSE_PATTERN = r"⏺(?:\x1b\[[0-9;]*m)*\s+"  # Handle any ANSI codes between marker and text
-PROCESSING_PATTERN = r"[✶✢✽✻·✳].*….*\(esc to interrupt.*\)"
-IDLE_PROMPT_PATTERN = r">[\s\xa0]"  # Handle both regular space and non-breaking space
-WAITING_USER_ANSWER_PATTERN = (
-    r"❯.*\d+\."  # Pattern for Claude showing selection options with arrow cursor
-)
-IDLE_PROMPT_PATTERN_LOG = r">[\s\xa0]"  # Same pattern for log files
+RESPONSE_PATTERN = r"●(?:\x1b\[[0-9;]*m)*\s+"
+PROCESSING_PATTERN = r"(?:esc|ctrl\+c)\s+to\s+interrupt"
+IDLE_PROMPT_PATTERN = r"❯[\s\xa0]+(?:\x1b\[[0-9;]*m)*T(?:\x1b\[[0-9;]*m)*r(?:\x1b\[[0-9;]*m)*y[\s\xa0]+\".*\""
+WAITING_USER_ANSWER_PATTERN = r"❯.*\d+\."
+COMPLETION_PATTERN = r"Cogitated for \d+[smh]"
+IDLE_PROMPT_PATTERN_LOG = r"❯[\s\xa0]+(?:\x1b\[[0-9;]*m)*T(?:\x1b\[[0-9;]*m)*r(?:\x1b\[[0-9;]*m)*y[\s\xa0]+\".*\""
 
 
 class ClaudeCodeProvider(BaseProvider):
@@ -43,70 +43,112 @@ class ClaudeCodeProvider(BaseProvider):
         self._initialized = False
         self._agent_profile = agent_profile
 
-    def _build_claude_command(self) -> List[str]:
-        """Build Claude Code command with agent profile if provided."""
+    def _build_claude_command(self) -> tuple[List[str], Optional[str]]:
+        """Build Claude Code command with agent profile if provided.
+
+        Returns:
+            Tuple of (command_parts, initial_prompt)
+        """
         command_parts = ["claude"]
+        initial_prompt = None
 
         if self._agent_profile is not None:
             try:
                 profile = load_agent_profile(self._agent_profile)
 
-                # Add system prompt with proper escaping
-                system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
-                command_parts.extend(["--append-system-prompt", shlex.quote(system_prompt)])
+                system_prompt = (
+                    profile.system_prompt if profile.system_prompt is not None else ""
+                )
+                command_parts.extend(
+                    ["--append-system-prompt", shlex.quote(system_prompt)]
+                )
 
-                # Add MCP config if present
+                initial_prompt = profile.initial_prompt
+
+                # Add MCP config AFTER initial_prompt to avoid argument parsing issues
                 if profile.mcpServers:
                     mcp_json = profile.model_dump_json(include={"mcpServers"})
                     command_parts.extend(["--mcp-config", shlex.quote(mcp_json)])
 
             except Exception as e:
-                raise ProviderError(f"Failed to load agent profile '{self._agent_profile}': {e}")
+                raise ProviderError(
+                    f"Failed to load agent profile '{self._agent_profile}': {e}"
+                )
 
-        return command_parts
+        return command_parts, initial_prompt
 
     def initialize(self) -> bool:
         """Initialize Claude Code provider by starting claude command."""
-        # Build command with agent profile support
-        command_parts = self._build_claude_command()
-        command = " ".join(command_parts)
+        command_parts, initial_prompt = self._build_claude_command()
 
-        # Send Claude Code command using tmux client
+        terminal_state = get_terminal_state(self.terminal_id)
+        if terminal_state and terminal_state.get("initial_prompt"):
+            initial_prompt = terminal_state["initial_prompt"]
+
+        if initial_prompt:
+            command_parts.append(shlex.quote(initial_prompt))
+
+        command = " ".join(command_parts)
         tmux_client.send_keys(self.session_name, self.window_name, command)
 
-        # Wait for Claude Code prompt to be ready
-        if not wait_until_status(self, TerminalStatus.IDLE, timeout=30.0, polling_interval=1.0):
-            raise TimeoutError("Claude Code initialization timed out after 30 seconds")
+        if initial_prompt:
+            if not wait_until_status(
+                self, TerminalStatus.COMPLETED, timeout=90.0, polling_interval=1.0
+            ):
+                raise TimeoutError(
+                    "Claude Code initialization with initial prompt timed out after 90 seconds"
+                )
+        else:
+            if not wait_until_status(
+                self, TerminalStatus.IDLE, timeout=30.0, polling_interval=1.0
+            ):
+                raise TimeoutError(
+                    "Claude Code initialization timed out after 30 seconds"
+                )
 
         self._initialized = True
         return True
 
     def get_status(self, tail_lines: Optional[int] = None) -> TerminalStatus:
-        """Get Claude Code status by analyzing terminal output."""
+        """Get Claude Code status by analyzing terminal output.
+
+        Detection priority:
+        1. PROCESSING - Actively working (ctrl+c to interrupt present)
+        2. WAITING_USER_ANSWER - Waiting for user selection
+        3. COMPLETED - Task finished (Cogitated timestamp + idle prompt + no processing)
+        4. IDLE - Ready for input (idle prompt only)
+        5. ERROR - Unrecognized state
+        """
 
         # Use tmux client singleton to get window history
-        output = tmux_client.get_history(self.session_name, self.window_name, tail_lines=tail_lines)
+        output = tmux_client.get_history(
+            self.session_name, self.window_name, tail_lines=tail_lines or 500
+        )
 
         if not output:
             return TerminalStatus.ERROR
 
-        # Check for processing state first
-        if re.search(PROCESSING_PATTERN, output):
+        # Priority 1: Check for processing state
+        is_processing = re.search(PROCESSING_PATTERN, output)
+        if is_processing:
             return TerminalStatus.PROCESSING
 
-        # Check for waiting user answer (Claude asking for user selection)
+        # Priority 2: Check for waiting user answer (Claude asking for user selection)
         if re.search(WAITING_USER_ANSWER_PATTERN, output):
             return TerminalStatus.WAITING_USER_ANSWER
 
-        # Check for completed state (has response + ready prompt)
-        if re.search(RESPONSE_PATTERN, output) and re.search(IDLE_PROMPT_PATTERN, output):
+        # Priority 3: Check for completed state (explicit timestamp verification)
+        has_completion_timestamp = re.search(COMPLETION_PATTERN, output)
+        has_idle_prompt = re.search(IDLE_PROMPT_PATTERN, output)
+
+        if has_completion_timestamp and has_idle_prompt and not is_processing:
             return TerminalStatus.COMPLETED
 
-        # Check for idle state (just ready prompt, no response)
-        if re.search(IDLE_PROMPT_PATTERN, output):
+        # Priority 4: Check for idle state (just ready prompt, no completion)
+        if has_idle_prompt:
             return TerminalStatus.IDLE
 
-        # If no recognizable state, return ERROR
+        # Priority 5: If no recognizable state, return ERROR
         return TerminalStatus.ERROR
 
     def get_idle_pattern_for_log(self) -> str:
@@ -114,18 +156,18 @@ class ClaudeCodeProvider(BaseProvider):
         return IDLE_PROMPT_PATTERN_LOG
 
     def extract_last_message_from_script(self, script_output: str) -> str:
-        """Extract Claude's final response message using ⏺ indicator."""
+        """Extract Claude's final response message using ● indicator."""
         # Find all matches of response pattern
         matches = list(re.finditer(RESPONSE_PATTERN, script_output))
 
         if not matches:
-            raise ValueError("No Claude Code response found - no ⏺ pattern detected")
+            raise ValueError("No Claude Code response found - no ● pattern detected")
 
         # Get the last match (final answer)
         last_match = matches[-1]
         start_pos = last_match.end()
 
-        # Extract everything after the last ⏺ until next prompt or separator
+        # Extract everything after the last ● until next prompt or separator
         remaining_text = script_output[start_pos:]
 
         # Split by lines and extract response
@@ -142,7 +184,7 @@ class ClaudeCodeProvider(BaseProvider):
             response_lines.append(clean_line)
 
         if not response_lines or not any(line.strip() for line in response_lines):
-            raise ValueError("Empty Claude Code response - no content found after ⏺")
+            raise ValueError("Empty Claude Code response - no content found after ●")
 
         # Join lines and clean up
         final_answer = "\n".join(response_lines).strip()

@@ -1,15 +1,21 @@
 import { Node, Edge } from '@xyflow/react';
 import { ProviderType } from './cao';
 
-// Workflow Node Types
-export enum WorkflowNodeType {
+export enum BPMNElementType {
+  START_EVENT = 'startEvent',
+  END_EVENT = 'endEvent',
+  SERVICE_TASK = 'serviceTask',
+  SCRIPT_TASK = 'scriptTask',
+  USER_TASK = 'userTask',
+  EXCLUSIVE_GATEWAY = 'exclusiveGateway',
+  PARALLEL_GATEWAY = 'parallelGateway',
+  INCLUSIVE_GATEWAY = 'inclusiveGateway',
+  SEQUENCE_FLOW = 'sequenceFlow',
+  
   AGENT_SPAWN = 'agent_spawn',
   HANDOFF = 'handoff',
   ASSIGN = 'assign',
   SEND_MESSAGE = 'send_message',
-  DECISION = 'decision',
-  INPUT = 'input',
-  OUTPUT = 'output',
   WEBHOOK = 'webhook',
   XOR_SPLIT = 'xor_split',
   XOR_JOIN = 'xor_join',
@@ -17,7 +23,19 @@ export enum WorkflowNodeType {
   AND_JOIN = 'and_join',
   OR_SPLIT = 'or_split',
   OR_JOIN = 'or_join',
+  DECISION = 'decision',
+  INPUT = 'input',
+  OUTPUT = 'output',
 }
+
+export enum GatewayDirection {
+  DIVERGING = 'Diverging',
+  CONVERGING = 'Converging',
+  MIXED = 'Mixed',
+}
+
+export type WorkflowNodeType = BPMNElementType;
+export const WorkflowNodeType = BPMNElementType;
 
 // Workflow Execution Status
 export enum WorkflowExecutionStatus {
@@ -28,21 +46,45 @@ export enum WorkflowExecutionStatus {
   FAILED = 'failed',
 }
 
-// Node Configuration
-export interface NodeConfig extends Record<string, unknown> {
+export interface ServiceTaskConfig {
+  agentProfile: string;
+  provider: ProviderType;
+  taskTemplate: string;
+  systemPrompt?: string;
+  timeout?: number;
+  waitForCompletion: boolean;
+}
+
+export interface ScriptTaskConfig {
+  scriptFormat: 'javascript' | 'python' | 'jinja2';
+  script: string;
+}
+
+export interface UserTaskConfig {
+  assignee?: string;
+  candidateUsers?: string[];
+}
+
+export interface GatewayConfig {
+  direction: GatewayDirection;
+  defaultFlow?: string;
+}
+
+export interface WebhookConfig {
+  webhookUrl: string;
+  webhookMethod: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  webhookPayload?: string;
+  isPromptInput?: boolean;
+}
+
+export interface LegacyAgentConfig {
   agentProfile?: string;
   provider?: ProviderType;
   message?: string;
   waitForCompletion?: boolean;
-  condition?: string;
-  timeout?: number;
-  retries?: number;
-  webhookUrl?: string;
-  webhookMethod?: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  webhookHeaders?: Record<string, string>;
-  webhookPayload?: string;
-  isPromptInput?: boolean;
 }
+
+export type NodeConfig = ServiceTaskConfig | ScriptTaskConfig | UserTaskConfig | GatewayConfig | WebhookConfig | LegacyAgentConfig | Record<string, unknown>;
 
 // Workflow Node Data
 export interface WorkflowNodeData extends Record<string, unknown> {
@@ -55,13 +97,12 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   output?: string; // Execution output
 }
 
-// Workflow Edge Data
 export interface WorkflowEdgeData extends Record<string, unknown> {
   id: string;
   source: string;
   target: string;
   label?: string;
-  condition?: string; // For conditional edges
+  conditionExpression?: string;
 }
 
 // Typed Workflow Nodes and Edges

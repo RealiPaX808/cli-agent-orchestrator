@@ -1,5 +1,6 @@
 """Minimal database client with only terminal metadata."""
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -104,6 +105,99 @@ class SessionWorkflowModel(Base):
     session_name = Column(String, primary_key=True)
     workflow_id = Column(String, nullable=False)
     assigned_at = Column(DateTime, default=datetime.now)
+
+
+class TerminalStateModel(Base):
+    """SQLAlchemy model for terminal state management."""
+
+    __tablename__ = "terminal_states"
+
+    terminal_id = Column(String, primary_key=True)  # Links to terminals.id
+    context_data = Column(String, nullable=True)  # JSON: current working context
+    variables = Column(String, nullable=True)  # JSON: key-value pairs for templating
+    initial_prompt = Column(
+        String, nullable=True
+    )  # Dynamic initial prompt (overrides .md)
+    last_checkpoint = Column(String, nullable=True)  # JSON: last known good state
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class TaskModel(Base):
+    """SQLAlchemy model for task management."""
+
+    __tablename__ = "tasks"
+
+    id = Column(String, primary_key=True)  # T-001, T-002, etc.
+    workflow_id = Column(String, nullable=True)  # Links to workflows.id (optional)
+    title = Column(String, nullable=False)  # "Implement user authentication"
+    description = Column(String, nullable=False)  # Full task specification
+    task_type = Column(String, nullable=False)  # "CODE", "REVIEW", "TEST", "ANALYZE"
+    priority = Column(Integer, default=0)  # Higher = more urgent
+    status = Column(
+        String, nullable=False
+    )  # "PENDING", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "FAILED"
+    dependencies = Column(String, nullable=True)  # JSON: ["T-001", "T-002"]
+    task_metadata = Column(String, nullable=True)  # JSON: task-specific data
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class TaskAssignmentModel(Base):
+    """SQLAlchemy model for task assignments."""
+
+    __tablename__ = "task_assignments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String, nullable=False)  # Links to tasks.id
+    terminal_id = Column(String, nullable=False)  # Links to terminals.id
+    assigned_at = Column(DateTime, default=datetime.now)
+    started_at = Column(DateTime, nullable=True)  # When agent started working
+    completed_at = Column(DateTime, nullable=True)  # When agent finished
+    status = Column(
+        String, nullable=False
+    )  # "ASSIGNED", "ACCEPTED", "IN_PROGRESS", "COMPLETED", "FAILED"
+    result = Column(String, nullable=True)  # JSON: task output/artifacts
+    error_message = Column(String, nullable=True)  # If failed, why?
+
+
+class TaskArtifactModel(Base):
+    """SQLAlchemy model for task artifacts."""
+
+    __tablename__ = "task_artifacts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String, nullable=False)  # Links to tasks.id
+    artifact_type = Column(
+        String, nullable=False
+    )  # "CODE", "LOG", "TEST_RESULT", "ERROR"
+    file_path = Column(String, nullable=True)  # Where artifact is stored
+    content = Column(String, nullable=True)  # Artifact content (if small)
+    content_hash = Column(String, nullable=True)  # SHA256 for integrity
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class WorkflowExecutionModel(Base):
+    """SQLAlchemy model for workflow execution tracking."""
+
+    __tablename__ = "workflow_executions"
+
+    id = Column(String, primary_key=True)  # exec-uuid
+    workflow_id = Column(String, nullable=False)  # Links to workflows.id
+    session_name = Column(
+        String, nullable=False
+    )  # Links to session_workflows.session_name
+    status = Column(
+        String, nullable=False
+    )  # "RUNNING", "PAUSED", "COMPLETED", "FAILED"
+    current_node_id = Column(String, nullable=True)  # Which BPMN node is active
+    execution_data = Column(
+        String, nullable=True
+    )  # JSON: runtime variables, token positions
+    started_at = Column(DateTime, default=datetime.now)
+    completed_at = Column(DateTime, nullable=True)
+    error_message = Column(String, nullable=True)
 
 
 # Module-level singletons
@@ -691,3 +785,311 @@ def unassign_workflow_from_session(session_name: str) -> bool:
         )
         db.commit()
         return deleted > 0
+
+
+def create_terminal_state(
+    terminal_id: str,
+    context_data: Optional[str] = None,
+    variables: Optional[str] = None,
+    initial_prompt: Optional[str] = None,
+    last_checkpoint: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create terminal state record."""
+    with SessionLocal() as db:
+        state = TerminalStateModel(
+            terminal_id=terminal_id,
+            context_data=context_data,
+            variables=variables,
+            initial_prompt=initial_prompt,
+            last_checkpoint=last_checkpoint,
+        )
+        db.add(state)
+        db.commit()
+        db.refresh(state)
+        return {
+            "terminal_id": state.terminal_id,
+            "context_data": state.context_data,
+            "variables": state.variables,
+            "initial_prompt": state.initial_prompt,
+            "last_checkpoint": state.last_checkpoint,
+            "created_at": state.created_at,
+            "updated_at": state.updated_at,
+        }
+
+
+def get_terminal_state(terminal_id: str) -> Optional[Dict[str, Any]]:
+    """Get terminal state by terminal ID."""
+    with SessionLocal() as db:
+        state = (
+            db.query(TerminalStateModel)
+            .filter(TerminalStateModel.terminal_id == terminal_id)
+            .first()
+        )
+        if not state:
+            return None
+        return {
+            "terminal_id": state.terminal_id,
+            "context_data": state.context_data,
+            "variables": state.variables,
+            "initial_prompt": state.initial_prompt,
+            "last_checkpoint": state.last_checkpoint,
+            "created_at": state.created_at,
+            "updated_at": state.updated_at,
+        }
+
+
+def update_terminal_state(
+    terminal_id: str,
+    context_data: Optional[str] = None,
+    variables: Optional[str] = None,
+    initial_prompt: Optional[str] = None,
+    last_checkpoint: Optional[str] = None,
+) -> bool:
+    """Update terminal state."""
+    with SessionLocal() as db:
+        state = (
+            db.query(TerminalStateModel)
+            .filter(TerminalStateModel.terminal_id == terminal_id)
+            .first()
+        )
+        if not state:
+            return False
+
+        if context_data is not None:
+            state.context_data = context_data
+        if variables is not None:
+            state.variables = variables
+        if initial_prompt is not None:
+            state.initial_prompt = initial_prompt
+        if last_checkpoint is not None:
+            state.last_checkpoint = last_checkpoint
+
+        state.updated_at = datetime.now()
+        db.commit()
+        return True
+
+
+def delete_terminal_state(terminal_id: str) -> bool:
+    """Delete terminal state."""
+    with SessionLocal() as db:
+        deleted = (
+            db.query(TerminalStateModel)
+            .filter(TerminalStateModel.terminal_id == terminal_id)
+            .delete()
+        )
+        db.commit()
+        return deleted > 0
+
+
+def create_task(
+    task_id: str,
+    title: str,
+    description: str,
+    task_type: str,
+    workflow_id: Optional[str] = None,
+    priority: int = 0,
+    status: str = "PENDING",
+    dependencies: Optional[str] = None,
+    task_metadata: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create task record."""
+    with SessionLocal() as db:
+        task = TaskModel(
+            id=task_id,
+            workflow_id=workflow_id,
+            title=title,
+            description=description,
+            task_type=task_type,
+            priority=priority,
+            status=status,
+            dependencies=dependencies,
+            task_metadata=task_metadata,
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        return {
+            "id": task.id,
+            "workflow_id": task.workflow_id,
+            "title": task.title,
+            "description": task.description,
+            "task_type": task.task_type,
+            "priority": task.priority,
+            "status": task.status,
+            "dependencies": task.dependencies,
+            "task_metadata": task.task_metadata,
+            "created_at": task.created_at,
+            "updated_at": task.updated_at,
+            "completed_at": task.completed_at,
+        }
+
+
+def get_task(task_id: str) -> Optional[Dict[str, Any]]:
+    """Get task by ID."""
+    with SessionLocal() as db:
+        task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+        if not task:
+            return None
+        return {
+            "id": task.id,
+            "workflow_id": task.workflow_id,
+            "title": task.title,
+            "description": task.description,
+            "task_type": task.task_type,
+            "priority": task.priority,
+            "status": task.status,
+            "dependencies": task.dependencies,
+            "task_metadata": task.task_metadata,
+            "created_at": task.created_at,
+            "updated_at": task.updated_at,
+            "completed_at": task.completed_at,
+        }
+
+
+def update_task_status(
+    task_id: str, status: str, completed_at: Optional[datetime] = None
+) -> bool:
+    """Update task status."""
+    with SessionLocal() as db:
+        task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+        if not task:
+            return False
+        task.status = status
+        task.updated_at = datetime.now()
+        if completed_at:
+            task.completed_at = completed_at
+        db.commit()
+        return True
+
+
+def list_tasks(
+    workflow_id: Optional[str] = None,
+    status: Optional[str] = None,
+    task_type: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """List tasks with optional filters."""
+    with SessionLocal() as db:
+        query = db.query(TaskModel)
+
+        if workflow_id:
+            query = query.filter(TaskModel.workflow_id == workflow_id)
+        if status:
+            query = query.filter(TaskModel.status == status)
+        if task_type:
+            query = query.filter(TaskModel.task_type == task_type)
+
+        tasks = query.order_by(TaskModel.priority.desc(), TaskModel.created_at).all()
+        return [
+            {
+                "id": t.id,
+                "workflow_id": t.workflow_id,
+                "title": t.title,
+                "description": t.description,
+                "task_type": t.task_type,
+                "priority": t.priority,
+                "status": t.status,
+                "dependencies": t.dependencies,
+                "task_metadata": t.task_metadata,
+                "created_at": t.created_at,
+                "updated_at": t.updated_at,
+                "completed_at": t.completed_at,
+            }
+            for t in tasks
+        ]
+
+
+def assign_task(
+    task_id: str, terminal_id: str, status: str = "ASSIGNED"
+) -> Dict[str, Any]:
+    """Assign task to terminal."""
+    with SessionLocal() as db:
+        assignment = TaskAssignmentModel(
+            task_id=task_id,
+            terminal_id=terminal_id,
+            status=status,
+        )
+        db.add(assignment)
+        db.commit()
+        db.refresh(assignment)
+        return {
+            "id": assignment.id,
+            "task_id": assignment.task_id,
+            "terminal_id": assignment.terminal_id,
+            "assigned_at": assignment.assigned_at,
+            "started_at": assignment.started_at,
+            "completed_at": assignment.completed_at,
+            "status": assignment.status,
+            "result": assignment.result,
+            "error_message": assignment.error_message,
+        }
+
+
+def update_task_assignment(
+    assignment_id: int,
+    status: Optional[str] = None,
+    started_at: Optional[datetime] = None,
+    completed_at: Optional[datetime] = None,
+    result: Optional[str] = None,
+    error_message: Optional[str] = None,
+) -> bool:
+    """Update task assignment."""
+    with SessionLocal() as db:
+        assignment = (
+            db.query(TaskAssignmentModel)
+            .filter(TaskAssignmentModel.id == assignment_id)
+            .first()
+        )
+        if not assignment:
+            return False
+
+        if status is not None:
+            assignment.status = status
+        if started_at is not None:
+            assignment.started_at = started_at
+        if completed_at is not None:
+            assignment.completed_at = completed_at
+        if result is not None:
+            assignment.result = result
+        if error_message is not None:
+            assignment.error_message = error_message
+
+        db.commit()
+        return True
+
+
+def get_task_assignments(
+    task_id: Optional[str] = None, terminal_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Get task assignments with optional filters."""
+    with SessionLocal() as db:
+        query = db.query(TaskAssignmentModel)
+
+        if task_id:
+            query = query.filter(TaskAssignmentModel.task_id == task_id)
+        if terminal_id:
+            query = query.filter(TaskAssignmentModel.terminal_id == terminal_id)
+
+        assignments = query.order_by(TaskAssignmentModel.assigned_at.desc()).all()
+        result_list = []
+        for a in assignments:
+            result_data = None
+            if a.result:
+                try:
+                    result_data = json.loads(a.result)
+                except json.JSONDecodeError:
+                    result_data = a.result
+
+            result_list.append(
+                {
+                    "id": a.id,
+                    "task_id": a.task_id,
+                    "terminal_id": a.terminal_id,
+                    "assigned_at": a.assigned_at,
+                    "started_at": a.started_at,
+                    "completed_at": a.completed_at,
+                    "status": a.status,
+                    "result_data": result_data,
+                    "error_message": a.error_message,
+                }
+            )
+        return result_list

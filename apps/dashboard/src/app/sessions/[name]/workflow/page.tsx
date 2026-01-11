@@ -43,7 +43,7 @@ export default function SessionWorkflowPage() {
       setSession(sessionData);
       
       const workflowId = `session-${sessionName}`;
-      let sessionWorkflow = WorkflowStorage.getWorkflow(workflowId);
+      let sessionWorkflow = await WorkflowStorage.getWorkflow(workflowId);
       
       if (!sessionWorkflow) {
         sessionWorkflow = {
@@ -58,7 +58,7 @@ export default function SessionWorkflowPage() {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
-        WorkflowStorage.saveWorkflow(sessionWorkflow);
+        await WorkflowStorage.saveWorkflow(sessionWorkflow);
       }
       
       setWorkflow(sessionWorkflow);

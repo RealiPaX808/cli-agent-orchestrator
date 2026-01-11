@@ -11,8 +11,7 @@ import Textarea from "@cloudscape-design/components/textarea";
 import Button from "@cloudscape-design/components/button";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
-import { WorkflowStorage } from "@/lib/workflow-storage";
-import { WorkflowNodeType } from "@/types/workflow";
+
 
 export default function PromptInputPage({ params }: { params: Promise<{ name: string }> }) {
   const resolvedParams = use(params);
@@ -27,20 +26,9 @@ export default function PromptInputPage({ params }: { params: Promise<{ name: st
   const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    const workflows = WorkflowStorage.getWorkflows();
-    
-    for (const workflow of workflows) {
-      for (const node of workflow.nodes) {
-        if (
-          node.data.type === WorkflowNodeType.WEBHOOK &&
-          node.data.config.isPromptInput &&
-          node.data.config.webhookUrl
-        ) {
-          setWebhookUrl(node.data.config.webhookUrl);
-          return;
-        }
-      }
-    }
+    // FIXME: WEBHOOK functionality removed in BPMN migration
+    // Need to redesign prompt input workflow using BPMN SERVICE_TASK or custom task
+    setWebhookUrl(null);
   }, []);
 
   const handleOptimize = async () => {

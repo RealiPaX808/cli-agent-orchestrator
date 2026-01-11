@@ -16,7 +16,7 @@ interface ExecutePageProps {
 export default function ExecutePage({ params }: ExecutePageProps) {
   const router = useRouter();
   const resolvedParams = use(params);
-  const workflow = WorkflowStorage.getWorkflow(resolvedParams.id);
+  const workflow = use(WorkflowStorage.getWorkflow(resolvedParams.id));
 
   if (!workflow) {
     return (

@@ -1,0 +1,12 @@
+❯ create a test.txt file with hello world
+
+────────────────────────────────────────────────────────────────────────────────
+
+● I'll create the test.txt file for you.
+
+Write(test.txt)
+
+Do you want to create test.txt?
+ ❯ 1. Yes
+   2. Yes, allow all edits during this session
+   3. No

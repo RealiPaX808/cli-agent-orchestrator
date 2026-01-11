@@ -13,7 +13,7 @@ import '@xyflow/react/dist/style.css';
 import { nodeTypes } from './index';
 import { ChainNodeType, ChainNode, ChainEdge } from '@/types/chain';
 import { Node as ReactFlowNode } from '@xyflow/react';
-import { Session, TerminalStatus } from '@/types/cao';
+import { Session, TerminalStatus, ProviderType } from '@/types/cao';
 import Button from '@cloudscape-design/components/button';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { Workflow } from '@/types/workflow';
@@ -116,7 +116,7 @@ export const ChainOverviewCard = ({ sessions, className }: ChainOverviewCardProp
         const sessionWorkflow = await caoClient.getSessionWorkflow(selectedSession.name);
         setWorkflow(sessionWorkflow);
       } catch (error) {
-        console.error('Failed to load session workflow:', error);
+        // Session has no workflow assigned - this is normal, not an error
         setWorkflow(null);
       }
     };
@@ -133,14 +133,14 @@ export const ChainOverviewCard = ({ sessions, className }: ChainOverviewCardProp
       // Convert workflow nodes to chain nodes
       return workflow.nodes.map(node => ({
         id: node.id,
-        type: 'terminal', // Use terminal node type for now
+        type: 'terminal',
         position: node.position,
         data: {
           id: node.id,
           type: ChainNodeType.TERMINAL,
           label: node.data.label,
-          status: TerminalStatus.IDLE, // Default status
-          provider: node.data.config?.provider || 'q_cli',
+          status: TerminalStatus.IDLE,
+          provider: ('provider' in node.data.config ? node.data.config.provider : 'q_cli') as ProviderType,
         },
       } as ChainNode));
     }

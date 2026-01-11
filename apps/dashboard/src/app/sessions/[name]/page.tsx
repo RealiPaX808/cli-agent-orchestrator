@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 
 import Button from "@cloudscape-design/components/button";
 import Container from "@cloudscape-design/components/container";
+import ContentLayout from "@cloudscape-design/components/content-layout";
 import Header from "@cloudscape-design/components/header";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Box from "@cloudscape-design/components/box";
@@ -18,6 +19,8 @@ import Select from "@cloudscape-design/components/select";
 import Alert from "@cloudscape-design/components/alert";
 import Spinner from "@cloudscape-design/components/spinner";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
+import Tabs from "@cloudscape-design/components/tabs";
+import ColumnLayout from "@cloudscape-design/components/column-layout";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { WebhookTrigger } from "@/components/session/WebhookTrigger";
 
@@ -97,39 +100,6 @@ export default function SessionDetail({ params }: { params: Promise<{ name: stri
     }
   };
 
-  const contentHeader = (
-    <Header
-      variant="h1"
-      description={`Session ID: ${session?.id || name}`}
-      actions={
-        <SpaceBetween direction="horizontal" size="xs">
-          <Button
-            variant="normal"
-            onClick={() => router.push(`/sessions/${name}/prompt-input`)}
-            iconName="gen-ai"
-          >
-            Prompt Input
-          </Button>
-          <Button
-            variant="primary"
-            onClick={() => setShowAddTerminal(true)}
-            iconName="add-plus"
-          >
-            Add Terminal
-          </Button>
-          <Button
-            iconName="remove"
-            onClick={() => setShowDeleteConfirm(true)}
-          >
-            Delete Session
-          </Button>
-        </SpaceBetween>
-      }
-    >
-      Session Details
-    </Header>
-  );
-
   if (loading) {
     return (
       <DashboardLayout
@@ -138,7 +108,7 @@ export default function SessionDetail({ params }: { params: Promise<{ name: stri
           { text: "Sessions", href: "/sessions" },
           { text: name, href: `/sessions/${name}` },
         ]}
-        contentHeader={contentHeader}
+        contentType="default"
       >
         <Container>
           <Box textAlign="center" padding={{ top: "xxl", bottom: "xxl" }}>
@@ -159,6 +129,7 @@ export default function SessionDetail({ params }: { params: Promise<{ name: stri
           { text: "Home", href: "/" },
           { text: name, href: `/sessions/${name}` }
         ]}
+        contentType="default"
       >
         <Container>
           <Alert type="error" header="Session not found">
@@ -172,80 +143,10 @@ export default function SessionDetail({ params }: { params: Promise<{ name: stri
     );
   }
 
-  const mainContent = (
-    <SpaceBetween direction="vertical" size="l">
-      <Container
-        header={
-          <Header>
-            {session.name}
-          </Header>
-        }
-      >
-        <SpaceBetween direction="vertical" size="s">
-          <Box variant="small" color="text-body-secondary">
-            {session.id}
-          </Box>
-          <StatusIndicator
-            type={session.status === "active" ? "success" : "stopped"}
-          >
-            {session.status}
-          </StatusIndicator>
-          {session.workflow_id && (
-            <Box>
-              <strong>Workflow:</strong> {session.workflow_id}
-            </Box>
-          )}
-        </SpaceBetween>
-      </Container>
-
-      <WebhookTrigger />
-
-      {terminals.length > 0 && (
-        <Container>
-          <Box padding={{ bottom: "m" }}>
-            <Header>Active Terminals ({terminals.length})</Header>
-          </Box>
-          <SpaceBetween direction="vertical" size="l">
-            {terminals.map((terminal) => (
-              <Container
-                key={terminal.id}
-                header={
-                  <SpaceBetween direction="horizontal" size="xs">
-                    <Box fontWeight="bold">{terminal.name}</Box>
-                    <StatusIndicator
-                      type={terminal.status === "idle" || terminal.status === "processing" ? "success" : "stopped"}
-                    >
-                      {terminal.status}
-                    </StatusIndicator>
-                  </SpaceBetween>
-                }
-              >
-                <Box padding={{ bottom: "s" }} variant="div" color="text-body-secondary">
-                  <SpaceBetween direction="vertical" size="xs">
-                    <Box><strong>Terminal ID:</strong> {terminal.id}</Box>
-                    <Box><strong>Type:</strong> {terminal.provider}</Box>
-                    {terminal.agent_profile && <Box><strong>Agent:</strong> {terminal.agent_profile}</Box>}
-                    <Box><strong>Status:</strong> {terminal.status}</Box>
-                  </SpaceBetween>
-                </Box>
-                <Link href={`/terminals/${terminal.id}`}>
-                  <Button variant="primary">View Terminal</Button>
-                </Link>
-              </Container>
-            ))}
-          </SpaceBetween>
-        </Container>
-      )}
-
-      {terminals.length === 0 && (
-        <Container>
-          <Box textAlign="center" padding={{ top: "xxl", bottom: "xxl" }} variant="p" color="text-body-secondary">
-            No active terminals. Add one to get started.
-          </Box>
-        </Container>
-      )}
-    </SpaceBetween>
-  );
+  const processingCount = terminals.filter(t => t.status === 'processing').length;
+  const idleCount = terminals.filter(t => t.status === 'idle').length;
+  const completedCount = terminals.filter(t => t.status === 'completed').length;
+  const errorCount = terminals.filter(t => t.status === 'error').length;
 
   return (
     <>
@@ -255,9 +156,217 @@ export default function SessionDetail({ params }: { params: Promise<{ name: stri
           { text: "Sessions", href: "/sessions" },
           { text: name, href: `/sessions/${name}` },
         ]}
-        contentHeader={contentHeader}
+        contentType="default"
       >
-        {mainContent}
+        <ContentLayout
+          header={
+            <Header
+              variant="h1"
+              description={`Session ID: ${session.id}`}
+              actions={
+                <SpaceBetween direction="horizontal" size="xs">
+                  <Button
+                    variant="normal"
+                    onClick={() => router.push(`/sessions/${name}/prompt-input`)}
+                    iconName="gen-ai"
+                  >
+                    Prompt Input
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={() => setShowAddTerminal(true)}
+                    iconName="add-plus"
+                  >
+                    Add Terminal
+                  </Button>
+                </SpaceBetween>
+              }
+            >
+              {session.name}
+            </Header>
+          }
+        >
+          <Tabs
+            tabs={[
+              {
+                id: "overview",
+                label: "Overview",
+                content: (
+                  <SpaceBetween direction="vertical" size="l">
+                    <Container
+                      header={<Header variant="h2">Session Information</Header>}
+                    >
+                      <ColumnLayout columns={2} variant="text-grid">
+                        <SpaceBetween direction="vertical" size="xs">
+                          <Box variant="awsui-key-label">Session Name</Box>
+                          <Box>{session.name}</Box>
+                        </SpaceBetween>
+                        <SpaceBetween direction="vertical" size="xs">
+                          <Box variant="awsui-key-label">Status</Box>
+                          <StatusIndicator
+                            type={session.status === "active" ? "success" : "stopped"}
+                          >
+                            {session.status}
+                          </StatusIndicator>
+                        </SpaceBetween>
+                        <SpaceBetween direction="vertical" size="xs">
+                          <Box variant="awsui-key-label">Session ID</Box>
+                          <Box variant="small" color="text-body-secondary">
+                            {session.id}
+                          </Box>
+                        </SpaceBetween>
+                        {session.workflow_id && (
+                          <SpaceBetween direction="vertical" size="xs">
+                            <Box variant="awsui-key-label">Workflow ID</Box>
+                            <Box>{session.workflow_id}</Box>
+                          </SpaceBetween>
+                        )}
+                      </ColumnLayout>
+                    </Container>
+
+                    <Container
+                      header={<Header variant="h2">Terminal Statistics</Header>}
+                    >
+                      <ColumnLayout columns={4} variant="text-grid">
+                        <SpaceBetween direction="vertical" size="xs">
+                          <Box variant="awsui-key-label">Processing</Box>
+                          <Box fontSize="heading-xl" fontWeight="bold">
+                            {processingCount}
+                          </Box>
+                        </SpaceBetween>
+                        <SpaceBetween direction="vertical" size="xs">
+                          <Box variant="awsui-key-label">Idle</Box>
+                          <Box fontSize="heading-xl" fontWeight="bold">
+                            {idleCount}
+                          </Box>
+                        </SpaceBetween>
+                        <SpaceBetween direction="vertical" size="xs">
+                          <Box variant="awsui-key-label">Completed</Box>
+                          <Box fontSize="heading-xl" fontWeight="bold">
+                            {completedCount}
+                          </Box>
+                        </SpaceBetween>
+                        <SpaceBetween direction="vertical" size="xs">
+                          <Box variant="awsui-key-label">Errors</Box>
+                          <Box fontSize="heading-xl" fontWeight="bold">
+                            {errorCount}
+                          </Box>
+                        </SpaceBetween>
+                      </ColumnLayout>
+                    </Container>
+
+                    <WebhookTrigger />
+                  </SpaceBetween>
+                ),
+              },
+              {
+                id: "terminals",
+                label: "Terminals",
+                content: (
+                  <Container>
+                    {terminals.length > 0 ? (
+                      <SpaceBetween direction="vertical" size="l">
+                        {terminals.map((terminal) => (
+                          <Container
+                            key={terminal.id}
+                            header={
+                              <SpaceBetween direction="horizontal" size="xs">
+                                <Box fontWeight="bold">{terminal.name}</Box>
+                                <StatusIndicator
+                                  type={
+                                    terminal.status === "idle" || terminal.status === "processing"
+                                      ? "success"
+                                      : "stopped"
+                                  }
+                                >
+                                  {terminal.status}
+                                </StatusIndicator>
+                              </SpaceBetween>
+                            }
+                          >
+                            <SpaceBetween direction="vertical" size="m">
+                              <ColumnLayout columns={2} variant="text-grid">
+                                <SpaceBetween direction="vertical" size="xs">
+                                  <Box variant="awsui-key-label">Terminal ID</Box>
+                                  <Box variant="small" color="text-body-secondary">
+                                    {terminal.id}
+                                  </Box>
+                                </SpaceBetween>
+                                <SpaceBetween direction="vertical" size="xs">
+                                  <Box variant="awsui-key-label">Type</Box>
+                                  <Box>{terminal.provider}</Box>
+                                </SpaceBetween>
+                                {terminal.agent_profile && (
+                                  <SpaceBetween direction="vertical" size="xs">
+                                    <Box variant="awsui-key-label">Agent Profile</Box>
+                                    <Box>{terminal.agent_profile}</Box>
+                                  </SpaceBetween>
+                                )}
+                              </ColumnLayout>
+                              <Link href={`/terminals/${terminal.id}`}>
+                                <Button variant="primary">View Terminal</Button>
+                              </Link>
+                            </SpaceBetween>
+                          </Container>
+                        ))}
+                      </SpaceBetween>
+                    ) : (
+                      <Box
+                        textAlign="center"
+                        padding={{ top: "xxl", bottom: "xxl" }}
+                        variant="p"
+                        color="text-body-secondary"
+                      >
+                        No active terminals. Add one to get started.
+                      </Box>
+                    )}
+                  </Container>
+                ),
+              },
+              {
+                id: "activity",
+                label: "Activity",
+                content: (
+                  <Container>
+                    <Box
+                      textAlign="center"
+                      padding={{ top: "xxl", bottom: "xxl" }}
+                      variant="p"
+                      color="text-body-secondary"
+                    >
+                      Activity timeline coming soon...
+                    </Box>
+                  </Container>
+                ),
+              },
+              {
+                id: "advanced",
+                label: "Advanced",
+                content: (
+                  <Container
+                    header={
+                      <Header variant="h2" description="Dangerous operations">
+                        Advanced Settings
+                      </Header>
+                    }
+                  >
+                    <FormField
+                      label="Delete Session"
+                      description="Permanently delete this session and all associated terminals"
+                    >
+                      <Button
+                        iconName="remove"
+                        onClick={() => setShowDeleteConfirm(true)}
+                      >
+                        Delete Session
+                      </Button>
+                    </FormField>
+                  </Container>
+                ),
+              },
+            ]}
+          />
+        </ContentLayout>
       </DashboardLayout>
 
       {showDeleteConfirm && (

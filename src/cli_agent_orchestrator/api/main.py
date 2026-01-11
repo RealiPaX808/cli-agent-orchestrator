@@ -13,7 +13,7 @@ import termios
 from contextlib import asynccontextmanager
 from importlib import resources
 from pathlib import Path
-from typing import Annotated, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 import aiofiles
 import requests
@@ -33,14 +33,24 @@ from watchdog.observers.polling import PollingObserver
 from cli_agent_orchestrator.clients.database import (
     assign_workflow_to_session as db_assign_workflow,
     create_inbox_message,
+    create_task,
+    create_terminal_state,
     create_workflow,
+    delete_terminal_state,
     delete_workflow,
     get_inbox_messages,
     get_session_workflow,
+    get_task,
+    get_task_assignments,
     get_terminal_metadata,
+    get_terminal_state,
     get_workflow,
     init_db,
+    list_tasks,
     list_workflows,
+    update_task_assignment,
+    update_task_status,
+    update_terminal_state,
     update_workflow,
 )
 from cli_agent_orchestrator.clients.tmux import tmux_client
@@ -79,6 +89,7 @@ from cli_agent_orchestrator.services.inbox_service import LogFileHandler
 from cli_agent_orchestrator.services.terminal_service import OutputMode
 from cli_agent_orchestrator.utils.logging import setup_logging
 from cli_agent_orchestrator.utils.terminal import generate_session_name
+from cli_agent_orchestrator.api.task_endpoints import register_task_routes
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +216,8 @@ app = FastAPI(
     version=SERVER_VERSION,
     lifespan=lifespan,
 )
+
+register_task_routes(app)
 
 
 @app.get("/agents")

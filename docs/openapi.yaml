@@ -1,0 +1,2047 @@
+openapi: 3.1.0
+info:
+  title: CLI Agent Orchestrator API
+  version: 1.0.0
+  description: |
+    REST API for the CLI Agent Orchestrator (CAO) - a workflow-based agent
+    coordination system for managing multiple AI agent terminals and workflows.
+
+  contact:
+    name: API Support
+    email: support@cli-agent-orchestrator.io
+
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:9889
+    description: Development server
+  - url: https://api.cli-agent-orchestrator.io
+    description: Production server
+
+tags:
+  - name: Authentication
+    description: User authentication and token management
+  - name: Sessions
+    description: Session management for agent coordination
+  - name: Workflows
+    description: Workflow definition and management
+  - name: Executions
+    description: Workflow execution management
+  - name: Terminals
+    description: Terminal agent management
+  - name: Tasks
+    description: Task assignment and tracking
+  - name: Webhooks
+    description: Webhook configuration and management
+  - name: Events
+    description: Event history and auditing
+  - name: Metrics
+    description: System metrics and analytics
+  - name: Agents
+    description: Agent profile management
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /api/auth/login
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for service-to-service authentication
+
+  schemas:
+    # Error Response
+    Error:
+      type: object
+      required:
+        - error
+        - code
+        - timestamp
+        - requestId
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+        code:
+          type: string
+          description: Machine-readable error code
+          enum:
+            - AUTH_FAILED
+            - AUTHZ_FAILED
+            - TOKEN_EXPIRED
+            - VALIDATION_ERROR
+            - WORKFLOW_NOT_FOUND
+            - SESSION_NOT_FOUND
+            - TERMINAL_NOT_FOUND
+            - EXECUTION_NOT_FOUND
+            - TASK_NOT_FOUND
+            - EXECUTION_FAILED
+            - RATE_LIMITED
+            - INTERNAL_ERROR
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional error details
+        timestamp:
+          type: string
+          format: date-time
+        requestId:
+          type: string
+          description: Unique request identifier for tracing
+
+    # Pagination
+    PaginationParams:
+      type: object
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          default: 1
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        sortBy:
+          type: string
+        sortOrder:
+          type: string
+          enum: [asc, desc]
+          default: desc
+
+    PaginatedResponse:
+      type: object
+      required:
+        - data
+        - total
+        - page
+        - limit
+        - hasNext
+        - hasPrevious
+      properties:
+        data:
+          type: array
+          items: true
+        total:
+          type: integer
+          minimum: 0
+        page:
+          type: integer
+          minimum: 1
+        limit:
+          type: integer
+          minimum: 1
+        hasNext:
+          type: boolean
+        hasPrevious:
+          type: boolean
+
+    # Enums
+    TerminalStatus:
+      type: string
+      enum:
+        - idle
+        - processing
+        - completed
+        - waiting_permission
+        - waiting_user_answer
+        - error
+
+    ProviderType:
+      type: string
+      enum:
+        - q_cli
+        - kiro_cli
+        - claude_code
+        - opencode
+        - gemini_cli
+        - qwen_cli
+        - gh_copilot
+
+    SessionStatus:
+      type: string
+      enum:
+        - active
+        - detached
+        - terminated
+
+    WorkflowExecutionStatus:
+      type: string
+      enum:
+        - idle
+        - running
+        - paused
+        - completed
+        - failed
+
+    BPMNElementType:
+      type: string
+      enum:
+        - startEvent
+        - endEvent
+        - serviceTask
+        - scriptTask
+        - userTask
+        - exclusiveGateway
+        - parallelGateway
+        - inclusiveGateway
+        - sequenceFlow
+        - agent_spawn
+        - handoff
+        - assign
+        - send_message
+        - webhook
+        - xor_split
+        - xor_join
+        - and_split
+        - and_join
+        - or_split
+        - or_join
+        - decision
+        - input
+        - output
+
+    TaskStatus:
+      type: string
+      enum:
+        - pending
+        - assigned
+        - in_progress
+        - completed
+        - failed
+        - cancelled
+
+    TaskPriority:
+      type: string
+      enum:
+        - low
+        - medium
+        - high
+        - critical
+
+    EventType:
+      type: string
+      enum:
+        - workflow.created
+        - workflow.updated
+        - workflow.deleted
+        - workflow.execution.started
+        - workflow.execution.completed
+        - workflow.execution.failed
+        - workflow.execution.paused
+        - workflow.execution.resumed
+        - node.execution.started
+        - node.execution.completed
+        - node.execution.failed
+        - node.skipped
+        - agent.spawned
+        - agent.terminated
+        - agent.assigned
+        - agent.message_sent
+        - agent.message_received
+        - session.created
+        - session.deleted
+        - session.attached
+        - session.detached
+        - terminal.created
+        - terminal.deleted
+        - terminal.status_changed
+        - terminal.output
+        - task.created
+        - task.assigned
+        - task.started
+        - task.completed
+        - task.failed
+
+    # Core Entities
+    Terminal:
+      type: object
+      required:
+        - id
+        - provider
+        - session_name
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        provider:
+          $ref: '#/components/schemas/ProviderType'
+        session_name:
+          type: string
+        agent_profile:
+          type: string
+        status:
+          $ref: '#/components/schemas/TerminalStatus'
+        last_active:
+          type: string
+          format: date-time
+
+    Session:
+      type: object
+      required:
+        - id
+        - name
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          $ref: '#/components/schemas/SessionStatus'
+        workflow_id:
+          type: string
+          format: uuid
+        execution_state:
+          type: object
+          additionalProperties: true
+        terminals:
+          type: array
+          items:
+            $ref: '#/components/schemas/Terminal'
+
+    WorkflowConfig:
+      type: object
+      properties:
+        autoExecute:
+          type: boolean
+          default: false
+        parallelExecution:
+          type: boolean
+          default: false
+        maxParallelNodes:
+          type: integer
+          minimum: 1
+          maximum: 100
+        errorHandling:
+          type: string
+          enum: [stop, continue, retry]
+          default: stop
+
+    WorkflowNode:
+      type: object
+      required:
+        - id
+        - type
+        - label
+        - position
+      properties:
+        id:
+          type: string
+        type:
+          $ref: '#/components/schemas/BPMNElementType'
+        label:
+          type: string
+        position:
+          type: object
+          properties:
+            x:
+              type: number
+            y:
+              type: number
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+            type:
+              $ref: '#/components/schemas/BPMNElementType'
+            label:
+              type: string
+            config:
+              type: object
+              additionalProperties: true
+            status:
+              $ref: '#/components/schemas/WorkflowExecutionStatus'
+            terminalId:
+              type: string
+            output:
+              type: string
+
+    WorkflowEdge:
+      type: object
+      required:
+        - id
+        - source
+        - target
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        target:
+          type: string
+        label:
+          type: string
+        conditionExpression:
+          type: string
+
+    Workflow:
+      type: object
+      required:
+        - id
+        - name
+        - nodes
+        - edges
+        - config
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowNode'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowEdge'
+        config:
+          $ref: '#/components/schemas/WorkflowConfig'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+
+    WorkflowExecution:
+      type: object
+      required:
+        - workflowId
+        - executionId
+        - status
+      properties:
+        workflowId:
+          type: string
+          format: uuid
+        executionId:
+          type: string
+        status:
+          $ref: '#/components/schemas/WorkflowExecutionStatus'
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        nodes:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/WorkflowNodeExecution'
+        currentNodeId:
+          type: string
+        error:
+          type: string
+
+    WorkflowNodeExecution:
+      type: object
+      required:
+        - nodeId
+        - status
+      properties:
+        nodeId:
+          type: string
+        status:
+          $ref: '#/components/schemas/WorkflowExecutionStatus'
+        terminalId:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        output:
+          type: string
+        error:
+          type: string
+
+    Task:
+      type: object
+      required:
+        - id
+        - workflowId
+        - executionId
+        - nodeId
+        - status
+        - priority
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        workflowId:
+          type: string
+          format: uuid
+        executionId:
+          type: string
+        nodeId:
+          type: string
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        priority:
+          $ref: '#/components/schemas/TaskPriority'
+        assignedTo:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        error:
+          type: string
+        result:
+          type: object
+          additionalProperties: true
+        input:
+          type: object
+          additionalProperties: true
+
+    Webhook:
+      type: object
+      required:
+        - id
+        - name
+        - url
+        - method
+        - enabled
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+        method:
+          type: string
+          enum: [GET, POST, PUT, DELETE]
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        lastTriggeredAt:
+          type: string
+          format: date-time
+
+    Event:
+      type: object
+      required:
+        - id
+        - type
+        - timestamp
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/EventType'
+        timestamp:
+          type: string
+          format: date-time
+        correlationId:
+          type: string
+          format: uuid
+        causationId:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+
+    # Auth
+    LoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    LoginResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+        - expires_in
+        - user
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          default: Bearer
+        expires_in:
+          type: integer
+        refresh_token:
+          type: string
+        user:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            username:
+              type: string
+            email:
+              type: string
+              format: email
+            roles:
+              type: array
+              items:
+                type: string
+            createdAt:
+              type: string
+              format: date-time
+
+    User:
+      type: object
+      required:
+        - id
+        - username
+        - email
+        - roles
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          items:
+            type: string
+            enum: [admin, operator, viewer]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+paths:
+  # ========================================================================
+  # Authentication
+  # ========================================================================
+  /api/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Login user
+      description: Authenticate with username/password and receive JWT token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Successful login
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh access token
+      description: Get a new access token using refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refresh_token
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  token_type:
+                    type: string
+                  expires_in:
+                    type: integer
+
+  /api/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Logout user
+      description: Invalidate the current session
+      responses:
+        '200':
+          description: Successful logout
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+  /api/auth/me:
+    get:
+      tags: [Authentication]
+      summary: Get current user
+      description: Get information about the authenticated user
+      responses:
+        '200':
+          description: User information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  # ========================================================================
+  # Sessions
+  # ========================================================================
+  /api/sessions:
+    get:
+      tags: [Sessions]
+      summary: List sessions
+      description: Get all sessions with optional filtering
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/StatusFilter'
+      responses:
+        '200':
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Session'
+
+    post:
+      tags: [Sessions]
+      summary: Create session
+      description: Create a new session with an agent terminal
+      parameters:
+        - name: provider
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/ProviderType'
+        - name: agent_profile
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: session_name
+          in: query
+          schema:
+            type: string
+        - name: workflow_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Terminal'
+
+  /api/sessions/{name}:
+    get:
+      tags: [Sessions]
+      summary: Get session
+      description: Get details of a specific session
+      parameters:
+        - $ref: '#/components/parameters/SessionName'
+      responses:
+        '200':
+          description: Session details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    $ref: '#/components/schemas/Session'
+                  terminals:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Terminal'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      tags: [Sessions]
+      summary: Delete session
+      description: Delete a session and all its terminals
+      parameters:
+        - $ref: '#/components/parameters/SessionName'
+      responses:
+        '200':
+          description: Session deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+  /api/sessions/{name}/workflow:
+    get:
+      tags: [Sessions]
+      summary: Get session workflow
+      description: Get the workflow associated with a session
+      parameters:
+        - $ref: '#/components/parameters/SessionName'
+      responses:
+        '200':
+          description: Workflow details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+
+  /api/sessions/{name}/terminals:
+    get:
+      tags: [Sessions]
+      summary: List session terminals
+      description: Get all terminals for a session
+      parameters:
+        - $ref: '#/components/parameters/SessionName'
+      responses:
+        '200':
+          description: List of terminals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Terminal'
+
+  # ========================================================================
+  # Workflows
+  # ========================================================================
+  /api/workflows:
+    get:
+      tags: [Workflows]
+      summary: List workflows
+      description: Get all workflows with pagination
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Search'
+      responses:
+        '200':
+          description: List of workflows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Workflow'
+
+    post:
+      tags: [Workflows]
+      summary: Create workflow
+      description: Create a new workflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Workflow'
+      responses:
+        '201':
+          description: Workflow created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+
+  /api/workflows/{id}:
+    get:
+      tags: [Workflows]
+      summary: Get workflow
+      description: Get details of a specific workflow
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+      responses:
+        '200':
+          description: Workflow details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+
+    put:
+      tags: [Workflows]
+      summary: Update workflow
+      description: Update an existing workflow
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                nodes:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/WorkflowNode'
+                edges:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/WorkflowEdge'
+                config:
+                  $ref: '#/components/schemas/WorkflowConfig'
+      responses:
+        '200':
+          description: Workflow updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+    delete:
+      tags: [Workflows]
+      summary: Delete workflow
+      description: Delete a workflow
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+      responses:
+        '200':
+          description: Workflow deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+  /api/workflows/{id}/execute:
+    post:
+      tags: [Executions]
+      summary: Execute workflow
+      description: Start a new workflow execution
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                input:
+                  type: object
+                  additionalProperties: true
+                config:
+                  $ref: '#/components/schemas/WorkflowConfig'
+      responses:
+        '201':
+          description: Execution started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  executionId:
+                    type: string
+                  workflowId:
+                    type: string
+                    format: uuid
+                  status:
+                    $ref: '#/components/schemas/WorkflowExecutionStatus'
+                  startedAt:
+                    type: string
+                    format: date-time
+
+  /api/workflows/{id}/executions:
+    get:
+      tags: [Executions]
+      summary: List workflow executions
+      description: Get all executions for a workflow
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/WorkflowExecutionStatus'
+      responses:
+        '200':
+          description: List of executions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+
+  # ========================================================================
+  # Executions
+  # ========================================================================
+  /api/executions/{executionId}:
+    get:
+      tags: [Executions]
+      summary: Get execution
+      description: Get details of a specific execution
+      parameters:
+        - name: executionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Execution details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  execution:
+                    $ref: '#/components/schemas/WorkflowExecution'
+                  workflow:
+                    $ref: '#/components/schemas/Workflow'
+
+  /api/executions/{executionId}/pause:
+    post:
+      tags: [Executions]
+      summary: Pause execution
+      description: Pause a running execution
+      parameters:
+        - name: executionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Execution paused
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  executionId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [paused]
+
+  /api/executions/{executionId}/resume:
+    post:
+      tags: [Executions]
+      summary: Resume execution
+      description: Resume a paused execution
+      parameters:
+        - name: executionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Execution resumed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  executionId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [running]
+
+  /api/executions/{executionId}/cancel:
+    post:
+      tags: [Executions]
+      summary: Cancel execution
+      description: Cancel an execution
+      parameters:
+        - name: executionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Execution cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  executionId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [cancelled]
+                  reason:
+                    type: string
+
+  # ========================================================================
+  # Terminals
+  # ========================================================================
+  /api/terminals/{id}:
+    get:
+      tags: [Terminals]
+      summary: Get terminal
+      description: Get details of a specific terminal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Terminal details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Terminal'
+
+    delete:
+      tags: [Terminals]
+      summary: Delete terminal
+      description: Delete a terminal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Terminal deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+  /api/terminals/{id}/output:
+    get:
+      tags: [Terminals]
+      summary: Get terminal output
+      description: Get the output from a terminal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [full, last, stream]
+            default: full
+      responses:
+        '200':
+          description: Terminal output
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  output:
+                    type: string
+                  mode:
+                    type: string
+
+  /api/terminals/{id}/output/stream:
+    get:
+      tags: [Terminals]
+      summary: Stream terminal output
+      description: Server-Sent Events stream for real-time terminal output
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/terminals/{id}/input:
+    post:
+      tags: [Terminals]
+      summary: Send input to terminal
+      description: Send a message/input to a terminal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: message
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Input sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+  /api/terminals/{terminalId}/inbox/messages:
+    get:
+      tags: [Terminals]
+      summary: Get terminal inbox messages
+      description: Get messages from a terminal's inbox
+      parameters:
+        - name: terminalId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Inbox messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    sender_id:
+                      type: string
+                    receiver_id:
+                      type: string
+                    message:
+                      type: string
+                    status:
+                      type: string
+                    created_at:
+                      type: string
+                      format: date-time
+
+  # ========================================================================
+  # Tasks
+  # ========================================================================
+  /api/tasks:
+    get:
+      tags: [Tasks]
+      summary: List tasks
+      description: Get all tasks with filtering
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: workflowId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: executionId
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/TaskStatus'
+        - name: assignedTo
+          in: query
+          schema:
+            type: string
+        - name: priority
+          in: query
+          schema:
+            $ref: '#/components/schemas/TaskPriority'
+      responses:
+        '200':
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+
+    post:
+      tags: [Tasks]
+      summary: Create task
+      description: Create a new task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - workflowId
+                - nodeId
+              properties:
+                workflowId:
+                  type: string
+                  format: uuid
+                executionId:
+                  type: string
+                nodeId:
+                  type: string
+                assignTo:
+                  type: string
+                priority:
+                  $ref: '#/components/schemas/TaskPriority'
+                input:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '201':
+          description: Task created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task:
+                    $ref: '#/components/schemas/Task'
+
+  /api/tasks/{taskId}:
+    get:
+      tags: [Tasks]
+      summary: Get task
+      description: Get details of a specific task
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Task details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task:
+                    $ref: '#/components/schemas/Task'
+                  execution:
+                    $ref: '#/components/schemas/WorkflowNodeExecution'
+
+    put:
+      tags: [Tasks]
+      summary: Update task status
+      description: Update the status of a task
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  $ref: '#/components/schemas/TaskStatus'
+                result:
+                  type: object
+                  additionalProperties: true
+                error:
+                  type: string
+      responses:
+        '200':
+          description: Task updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task:
+                    $ref: '#/components/schemas/Task'
+
+  /api/tasks/{taskId}/assign:
+    post:
+      tags: [Tasks]
+      summary: Assign task
+      description: Assign a task to an agent
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - agentId
+              properties:
+                agentId:
+                  type: string
+      responses:
+        '200':
+          description: Task assigned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task:
+                    $ref: '#/components/schemas/Task'
+
+  # ========================================================================
+  # Webhooks
+  # ========================================================================
+  /api/webhooks:
+    get:
+      tags: [Webhooks]
+      summary: List webhooks
+      description: Get all webhooks
+      responses:
+        '200':
+          description: List of webhooks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhooks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Webhook'
+
+    post:
+      tags: [Webhooks]
+      summary: Create webhook
+      description: Create a new webhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - url
+                - method
+              properties:
+                name:
+                  type: string
+                url:
+                  type: string
+                  format: uri
+                method:
+                  type: string
+                  enum: [GET, POST, PUT, DELETE]
+                headers:
+                  type: object
+                  additionalProperties:
+                    type: string
+                enabled:
+                  type: boolean
+                  default: true
+      responses:
+        '201':
+          description: Webhook created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhook:
+                    $ref: '#/components/schemas/Webhook'
+
+  /api/webhooks/{id}:
+    put:
+      tags: [Webhooks]
+      summary: Update webhook
+      description: Update an existing webhook
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                url:
+                  type: string
+                  format: uri
+                method:
+                  type: string
+                  enum: [GET, POST, PUT, DELETE]
+                headers:
+                  type: object
+                  additionalProperties:
+                    type: string
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Webhook updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhook:
+                    $ref: '#/components/schemas/Webhook'
+
+    delete:
+      tags: [Webhooks]
+      summary: Delete webhook
+      description: Delete a webhook
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Webhook deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+  /api/webhooks/execute:
+    post:
+      tags: [Webhooks]
+      summary: Execute webhook
+      description: Execute a webhook immediately
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - webhookUrl
+                - method
+              properties:
+                webhookUrl:
+                  type: string
+                  format: uri
+                method:
+                  type: string
+                  enum: [GET, POST, PUT, DELETE]
+                payload:
+                  type: string
+                headers:
+                  type: object
+                  additionalProperties:
+                    type: string
+      responses:
+        '200':
+          description: Webhook executed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status_code:
+                    type: integer
+                  response:
+                    type: string
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ========================================================================
+  # Events
+  # ========================================================================
+  /api/events:
+    get:
+      tags: [Events]
+      summary: List events
+      description: Get events with filtering
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: sessionId
+          in: query
+          schema:
+            type: string
+        - name: workflowId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: executionId
+          in: query
+          schema:
+            type: string
+        - name: eventType
+          in: query
+          schema:
+            $ref: '#/components/schemas/EventType'
+        - name: dateFrom
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: dateTo
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: List of events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+
+  /api/events/{eventId}:
+    get:
+      tags: [Events]
+      summary: Get event
+      description: Get details of a specific event
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Event details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event:
+                    $ref: '#/components/schemas/Event'
+
+  # ========================================================================
+  # Metrics
+  # ========================================================================
+  /api/metrics/summary:
+    get:
+      tags: [Metrics]
+      summary: Get system metrics
+      description: Get system-wide metrics summary
+      responses:
+        '200':
+          description: Metrics summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      active:
+                        type: integer
+                      byProvider:
+                        type: object
+                        additionalProperties:
+                          type: integer
+                  workflows:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      running:
+                        type: integer
+                      completedToday:
+                        type: integer
+                  terminals:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      active:
+                        type: integer
+                      byStatus:
+                        type: object
+                        additionalProperties:
+                          type: integer
+                  system:
+                    type: object
+                    properties:
+                      uptime:
+                        type: integer
+                      version:
+                        type: string
+
+  /api/metrics/workflows/{id}:
+    get:
+      tags: [Metrics]
+      summary: Get workflow metrics
+      description: Get metrics for a specific workflow
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+      responses:
+        '200':
+          description: Workflow metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflowId:
+                    type: string
+                    format: uuid
+                  totalExecutions:
+                    type: integer
+                  successfulExecutions:
+                    type: integer
+                  failedExecutions:
+                    type: integer
+                  averageExecutionTime:
+                    type: number
+                  lastExecutionAt:
+                    type: string
+                    format: date-time
+
+  # ========================================================================
+  # Agents
+  # ========================================================================
+  /api/agents:
+    get:
+      tags: [Agents]
+      summary: List agents
+      description: Get all available agent profiles
+      responses:
+        '200':
+          description: List of agent names
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+  /api/agents/{agentName}/content:
+    get:
+      tags: [Agents]
+      summary: Get agent content
+      description: Get the content of an agent profile
+      parameters:
+        - name: agentName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: string
+
+  /api/agents/install:
+    post:
+      tags: [Agents]
+      summary: Install agent
+      description: Install a new agent profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - source_type
+                - provider
+              properties:
+                source_type:
+                  type: string
+                  enum: [built-in, file, url]
+                name:
+                  type: string
+                path:
+                  type: string
+                provider:
+                  $ref: '#/components/schemas/ProviderType'
+      responses:
+        '200':
+          description: Agent installed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  agent_name:
+                    type: string
+                  message:
+                    type: string
+
+  /api/providers:
+    get:
+      tags: [Agents]
+      summary: List providers
+      description: Get all available providers
+      responses:
+        '200':
+          description: List of providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    label:
+                      type: string
+
+  # ========================================================================
+  # WebSocket
+  # ========================================================================
+  /ws:
+    get:
+      tags: [WebSocket]
+      summary: WebSocket connection
+      description: |
+        Establish a WebSocket connection for real-time updates.
+
+        Subscribe to channels using subscribe message:
+        ```json
+        {
+          "type": "subscribe",
+          "id": "sub-001",
+          "timestamp": "2025-01-11T10:00:00Z",
+          "payload": {
+            "channels": ["sessions:*", "workflows:{id}"]
+          }
+        }
+        ```
+
+        Channel format: `{resource}:{action}:{identifier}`
+        - sessions:* - All session events
+        - sessions:{sessionId} - Events for specific session
+        - workflows:{workflowId} - Events for specific workflow
+        - executions:{executionId} - Events for specific execution
+        - terminals:{terminalId} - Output for specific terminal
+      parameters:
+        - name: token
+          in: query
+          required: true
+          description: JWT authentication token
+          schema:
+            type: string
+      responses:
+        '101':
+          description: Switching protocols - WebSocket established
+      callbacks:
+        # WebSocket message callbacks
+        onMessage:
+          { "$ref": '#/components/callbacks/MessageEvent' }
+
+components:
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: Page number for pagination
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+    Limit:
+      name: limit
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    Search:
+      name: search
+      in: query
+      description: Search term
+      schema:
+        type: string
+
+    StatusFilter:
+      name: status
+      in: query
+      description: Filter by status
+      schema:
+        type: string
+
+    SessionName:
+      name: name
+      in: path
+      required: true
+      description: Session name
+      schema:
+        type: string
+
+    WorkflowId:
+      name: id
+      in: path
+      required: true
+      description: Workflow ID (UUID)
+      schema:
+        type: string
+        format: uuid
+
+  callbacks:
+    MessageEvent:
+      { "$ref": "#/components/schemas/WebSocketMessage" }
+
+  schemas:
+    WebSocketMessage:
+      type: object
+      required:
+        - type
+        - id
+        - timestamp
+      properties:
+        type:
+          type: string
+          enum: [subscribe, unsubscribe, ack, event, heartbeat, error, pong]
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        payload:
+          type: object
+          additionalProperties: true

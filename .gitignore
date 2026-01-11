@@ -26,6 +26,12 @@ dist/
 *.db
 .amazonq/
 .obsidian/
+.claude/*
+.mcp.json
+.claude-flow.json
+*.swarm
+/migrations/*
+.claude-flow/*
 
 # Memory
 context/package-lock.json
